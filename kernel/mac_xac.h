@@ -1,0 +1,13 @@
+#pragma once
+
+#define MAC_XAC_NAME "mac_xac"
+#define LOG_LEVEL_MAX 10
+
+enum mac_xac_syscalls {
+    MAC_XAC_SYSCALL_RELOAD,
+    MAC_XAC_SYSCALL_ENABLE,
+    MAC_XAC_SYSCALL_DISABLE,
+    MAC_XAC_SYSCALL_STATS,
+    MAC_XAC_SYSCALL_LOGLEVEL,
+    MAC_XAC_SYSCALL_DUMP,
+}; 
