@@ -108,9 +108,6 @@ struct verdict
 #define v_log_ex log[XAC_EXEC]
 };
 
-extern struct sx rulesets_lock;
-extern enum RulesetStatus rulesets_status;
-
 XAC_CONFIG_API void init_config(void);
 XAC_CONFIG_API void deinit_config(void);
 /**
