@@ -483,7 +483,7 @@ xac_proc_check_debug(struct ucred *cred, struct proc *p)
 	if (p->p_textvp == NULL)
 		return (0);
 
-	return xac_impl(curproc->p_textvp, p->p_textvp, cred, VREAD | VEXEC);
+	return xac_impl(curproc->p_textvp, p->p_textvp, cred, VREAD | VEXEC | VWRITE);
 }
 
 static int
