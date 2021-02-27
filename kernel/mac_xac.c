@@ -329,22 +329,27 @@ _xac_impl(char const *event_source, struct vnode *svp, struct vnode *ovp,
 		goto done;
 
 	rc = do_verdict(sid, 0UL, accmode, &v, &access);
-	if (rc == EPERM)
+	if (rc == EPERM) {
+		oid = 0;
 		goto done;
+	}
 
 	rc = do_verdict(0UL, oid, accmode, &v, &access);
-	if (rc == EPERM)
+	if (rc == EPERM) {
+		sid = 0;
 		goto done;
+	}
 
 	rc = 0;
 
 done:
 	if (rc == EPERM) {
-		if (v.log[access])
+		if (v.log[access]) {
 			xac_log(event_source,
 						&get_subject_byid(sid)->sp,
 						&get_object_byid(oid)->op,
 						&v, access);
+		}
 	}
 	config_unlock();
 
