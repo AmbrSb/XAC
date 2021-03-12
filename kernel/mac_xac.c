@@ -960,13 +960,42 @@ xac_vnode_create_extattr(struct ucred *cred, struct mount *mp,
 }
 
 static int
+selfbox_priv_check(struct proc *p, int priv)
+{
+	switch (priv) {
+	/* ZFS-specific privileges */
+	case PRIV_ZFS_POOL_CONFIG:
+	case PRIV_ZFS_INJECT:
+	case PRIV_ZFS_JAIL:
+	/* UFS-specific privileges */
+	case PRIV_UFS_EXTATTRCTL:
+	case PRIV_UFS_QUOTAOFF:
+	case PRIV_UFS_QUOTAON:
+	case PRIV_UFS_SETUSE:
+	/* NFS-specific privileges */
+	case PRIV_NFS_DAEMON:
+	case PRIV_NFS_LOCKD:
+		if (is_selfboxed(p))
+			return (EPERM);
+	}
+
+	return (0);
+}
+
+static int
 xac_priv_check(struct ucred *cred, int priv)
 {   
+	int rc;
+
 	if (!(xac_status & XAC_STATUS_ENABLED))
 		return (0);
 
+	rc = selfbox_priv_check(curproc, priv);
+	if (rc)
+		return (rc);
+
 	switch (priv) {
-	case PRIV_KMEM_WRITE: 
+	case PRIV_KMEM_WRITE:
 		return (EPERM);
 		break;
 
