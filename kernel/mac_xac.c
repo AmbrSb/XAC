@@ -146,6 +146,46 @@ free_xac_proc_label(void *label)
 	uma_zfree(xac_proc_label_zone, label);
 }
 
+static xac_proc_label_t *
+proc_get_label(struct proc *p)
+{
+	xac_proc_label_t *l;
+
+	if (!p->p_label)
+		return (NULL);
+	if (!(l = PSLOT(p->p_label))) {
+		l = uma_zalloc(xac_proc_label_zone, 0);
+		SLOT_SET(p->p_label, l);
+	}
+	return (l);
+}
+
+static
+box_rules_t*
+get_box_rules(struct proc *p)
+{
+	box_rules_t *br;
+	xac_proc_label_t *l;
+
+	l = proc_get_label(p);
+	if (l == NULL)
+		return (NULL);
+	br = &l->box_rules;
+	return br;
+}
+
+static int
+is_selfboxed(struct proc *p)
+{
+	box_rules_t *brs;
+
+	brs = get_box_rules(p);
+	if (brs && selfbox_active(*brs))
+		return (1);
+
+	return (0);
+}
+
 static int
 vnode_sha512(struct vnode *vp, struct ucred *cred, uint8_t result[64])
 {
@@ -229,20 +269,6 @@ vnode_get_label(struct vnode *vp)
 	return (l);
 }
 
-static xac_proc_label_t *
-proc_get_label(struct proc *p)
-{
-	xac_proc_label_t *l;
-
-	if (!p->p_label)
-		return (NULL);
-	if (!(l = PSLOT(p->p_label))) {
-		l = uma_zalloc(xac_proc_label_zone, 0);
-		SLOT_SET(p->p_label, l);
-	}
-	return (l);
-}
-
 typedef xac_vnode_label_t *(*resolve_label)(struct vnode *vp,
 										struct ucred *cred);
 
@@ -320,20 +346,6 @@ get_id(enum ItemType type, struct vnode *vp, struct ucred *cred)
 	return l->ids[type];
 }
 
-static
-box_rules_t*
-get_box_rules(struct proc *p)
-{
-	box_rules_t *br;
-	xac_proc_label_t *l;
-
-	l = proc_get_label(p);
-	if (l == NULL)
-		return (NULL);
-	br = &l->box_rules;
-	return br;
-}
-
 static int
 do_verdict_selfbox(struct proc *p, acid_t o, accmode_t accmode, struct verdict *v,
 			int *access)
@@ -346,7 +358,7 @@ do_verdict_selfbox(struct proc *p, acid_t o, accmode_t accmode, struct verdict *
 
 	box_rules_t *brs = get_box_rules(p);
 	if (brs == NULL) {
-		xac_printf(1, "allow proc with no label to bypass selfbox\n");
+		/* Allow proccess with no MAC label to bypass selfbox */
 		return (0);
 	}
 	if (*brs == NULL)
@@ -497,11 +509,19 @@ dump_rules(void)
 	// TODO
 }
 
+/*
+ * This function acts as the gatekeeper to XAC module system calls.
+ * Retruns EPERM if the caller is not authorized to make the call, and
+ * returns 0 otherwise.
+ */
 static int
 check_syscall_authorization(struct proc *p, int call)
 {
 	acid_t sid;
 	int rc = 0;
+
+	if (is_selfboxed(curproc))
+		return (EPERM);
 
 	switch (call)
 	{
@@ -516,6 +536,10 @@ check_syscall_authorization(struct proc *p, int call)
 			break;
 		}
 
+		/*
+		 * Only the xac admin executable (usually xactl) is allowed to
+		 * make these system calls to the XAC kernel module.
+		 */
 		sid = get_id(XAC_SUBJECT, curproc->p_textvp, curproc->p_ucred);
 		if (!ACTIVE_SID(sid))
 			rc = EPERM;

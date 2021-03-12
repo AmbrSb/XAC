@@ -166,3 +166,4 @@ XAC_CONFIG_API uint64_t proc_selfbox(box_rules_t *br,
 XAC_CONFIG_API int proc_selfbox_enter(box_rules_t *brs);
 XAC_CONFIG_API box_rules_t dup_box_ruleset(box_rules_t brs);
 XAC_CONFIG_API int verify_admin_sp(acid_t sid);
+XAC_CONFIG_API int selfbox_active(box_rules_t brs);

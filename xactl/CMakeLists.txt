@@ -70,6 +70,7 @@ target_link_libraries(${PROJECT_NAME}_sbtest_p_01 xac)
 add_executable(${PROJECT_NAME}_sbtest_c_01
 				tests/sbtest_c.cpp
 				tests/sbtest_common.h)
+target_link_libraries(${PROJECT_NAME}_sbtest_c_01 xac)
 add_test(NAME ${PROJECT_NAME}_sbtest_01
 		 COMMAND ${PROJECT_NAME}_sbtest_p_01)
  

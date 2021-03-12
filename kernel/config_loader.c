@@ -1492,6 +1492,19 @@ destroy_rulesets(int offset)
 	}
 }
 
+int
+selfbox_active(box_rules_t brs)
+{
+	struct box_ruleset *brsc;
+
+	brsc = (struct box_ruleset*)brs;
+	if (brsc)
+		return (brsc->active);
+	else
+		return (0);
+
+}
+
 uint64_t
 proc_selfbox(box_rules_t *br, struct selfbox_args const *sba)
 {
