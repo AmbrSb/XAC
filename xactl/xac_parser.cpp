@@ -214,6 +214,7 @@ using objects_symtab_t = std::map<uint32_t, string>;
 using object_ids_t = std::map<uint32_t, object>;
 
 struct rule_set {
+	subject admin_sp;
 	subjects_t subjects;
 	objects_t objects;
 	subjects_symtab_t subjects_symtab;
@@ -386,13 +387,15 @@ private:
 ruleset_parser::ruleset_parser(string const &config_path)
 	: rs{new rule_set{}}
 {
+	rs->admin_sp = create_subject("/usr/local/bin/xactl"s);
+
 	deque<token> tokens = tokenize(config_path);
 	skip_white_space(tokens);
 	while (tokens.size() > 0) {
 		if (tokens.front().type == TokenType::SUB_TOKEN) {
 			auto srec = parse_subject_record(tokens, rs->subjects, rs->subject_ids,
-												rs->objects, rs->object_ids,
-												rs->subjects_symtab, rs->objects_symtab);
+											rs->objects, rs->object_ids,
+											rs->subjects_symtab, rs->objects_symtab);
 			rs->subject_records.push_back(srec);
 		} else if (tokens.front().type == TokenType::OBJ_TOKEN) {
 			auto orec = parse_object_record(tokens, rs->subjects, rs->subject_ids,
@@ -911,6 +914,8 @@ ruleset_serializer::ruleset_serializer(shared_ptr<rule_set> rs)
 		for (auto const &subl: orec.subs)
 			rules_cnt++;
 
+	append_rs(rs->admin_sp);
+
 	append_symtab((uint32_t)rs->subject_ids.size());
 	append_symtab((uint32_t)rs->object_ids.size());
 
@@ -1010,6 +1015,7 @@ template<typename T, uint32_t N>
 void
 ruleset_serializer::append_rs(T (&arr)[N])
 {
+	std::cerr << "hello" << std::endl;
 	append(arr, servec);
 }
 

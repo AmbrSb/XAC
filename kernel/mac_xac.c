@@ -36,7 +36,9 @@
 #include <sys/syslog.h>
 #include <security/mac/mac_policy.h>
 #include <crypto/sha2/sha512.h>
+#include <sys/priv.h>
 #include <sys/imgact.h>
+#include <sys/namei.h>
 
 #include "mac_xac.h"
 #include "xac_common.h"
@@ -44,8 +46,11 @@
 
 SYSCTL_DECL(_security_mac);
 
-#define SLOT(l) \
-	((xac_label_t *)mac_label_get((l), mac_xac_slot))
+#define VSLOT(l) \
+	((xac_vnode_label_t *)mac_label_get((l), mac_xac_slot))
+
+#define PSLOT(l) \
+	((xac_proc_label_t *)mac_label_get((l), mac_xac_slot))
 
 #define SLOT_SET(l, v) \
 	mac_label_set((l), mac_xac_slot, (intptr_t)(v))
@@ -59,7 +64,8 @@ enum XacStatus {
 static uint32_t xac_status;
 static int mac_xac_slot = 1;
 
-uma_zone_t xac_label_zone;
+uma_zone_t xac_vnode_label_zone;
+uma_zone_t xac_proc_label_zone;
 
 uint64_t to_accessmode[XAC_ACCESS_MAX] = {
 	VREAD, VWRITE, VEXEC
@@ -70,15 +76,16 @@ typedef struct {
 #define l_subject_id ids[XAC_SUBJECT]
 #define l_object_id ids[XAC_OBJECT]
 	uint64_t ruleset_gen;
-} xac_label_t;
+} xac_vnode_label_t;
+
+typedef struct {
+	box_rules_t box_rules;
+} xac_proc_label_t;
 
 struct label {
-        int             l_flags;
-        intptr_t        l_perpolicy[4];
+    int l_flags;
+    intptr_t l_perpolicy[4];
 };
-
-#define ACTIVE_SID(s) (s != ACID_INVAL)
-#define ACTIVE_OID(o) (o != ACID_INVAL)
 
 extern struct label	*mac_vnode_label_alloc(void);
 
@@ -105,15 +112,38 @@ xac_log(char const *source, subject_personality_t *sp,
 }
 
 static void*
-alloc_xac_label()
+alloc_xac_vnode_label()
 {
-	return uma_zalloc(xac_label_zone, 0);
+	void *m = uma_zalloc(xac_vnode_label_zone, 0);
+	memset(m, 0, sizeof(xac_vnode_label_t));
+	return (m);
 }
 
 static void
-free_xac_label(void *label)
+free_xac_vnode_label(void *label)
 {
-	uma_zfree(xac_label_zone, label);
+	uma_zfree(xac_vnode_label_zone, label);
+}
+
+static void*
+alloc_xac_proc_label()
+{
+	void *m = uma_zalloc(xac_proc_label_zone, 0);
+	memset(m, 0, sizeof(xac_proc_label_t));
+	return (m);
+}
+
+static void
+free_xac_proc_label(void *label)
+{
+	xac_proc_label_t *l;
+
+	l = (xac_proc_label_t*)label;
+	if (l == NULL)
+		return;
+	free_box_rules(l->box_rules);
+	
+	uma_zfree(xac_proc_label_zone, label);
 }
 
 static int
@@ -173,7 +203,7 @@ update_xac_label(subject_personality_t *sp, struct vnode *vp,
 }
 
 static void
-verify_generation(xac_label_t *l)
+verify_generation(xac_vnode_label_t *l)
 {
 	uint64_t rg;
 
@@ -185,27 +215,41 @@ verify_generation(xac_label_t *l)
 	}
 }
 
-static xac_label_t *
+static xac_vnode_label_t *
 vnode_get_label(struct vnode *vp)
 {
-	xac_label_t *l;
+	xac_vnode_label_t *l;
 
 	if (!vp->v_label)
 		vp->v_label = mac_vnode_label_alloc();
-	if (!(l = SLOT(vp->v_label))) {
-		l = uma_zalloc(xac_label_zone, 0);
+	if (!(l = VSLOT(vp->v_label))) {
+		l = uma_zalloc(xac_vnode_label_zone, 0);
 		SLOT_SET(vp->v_label, l);
 	}
 	return (l);
 }
 
-typedef xac_label_t *(*resolve_label)(struct vnode *vp,
+static xac_proc_label_t *
+proc_get_label(struct proc *p)
+{
+	xac_proc_label_t *l;
+
+	if (!p->p_label)
+		return (NULL);
+	if (!(l = PSLOT(p->p_label))) {
+		l = uma_zalloc(xac_proc_label_zone, 0);
+		SLOT_SET(p->p_label, l);
+	}
+	return (l);
+}
+
+typedef xac_vnode_label_t *(*resolve_label)(struct vnode *vp,
 										struct ucred *cred);
 
-static xac_label_t *
+static xac_vnode_label_t *
 resolve_subject_label(struct vnode *vp, struct ucred *cred)
 {
-	xac_label_t *sl;
+	xac_vnode_label_t *sl;
 	subject_personality_t sp;
 	struct subject *sub;
 	int rc;
@@ -228,10 +272,10 @@ resolve_subject_label(struct vnode *vp, struct ucred *cred)
 	return (sl);
 }
 
-static xac_label_t *
+static xac_vnode_label_t *
 resolve_object_label(struct vnode *vp, struct ucred *cred)
 {
-	xac_label_t *ol;
+	xac_vnode_label_t *ol;
 	object_personality_t op;
 	struct object *obj;
 	struct vattr va;
@@ -247,6 +291,8 @@ resolve_object_label(struct vnode *vp, struct ucred *cred)
 		op.i_number = (uint64_t)va.va_fileid;
 		op.st_dev = (uint64_t)va.va_fsid;
 		rc = lookup_object(&op, &obj);
+		xac_printf(4, "lookup_object -> objid: %d rc: %d i_num: %lu  st_dev: %lu\n",
+				get_objectid(obj), rc, op.i_number, op.st_dev);
 		if (rc == 0) {
 			ol->l_object_id = get_objectid(obj);
 		} else {
@@ -265,7 +311,7 @@ resolve_label label_resolvers[XAC_TYPE_MAX] = {
 static acid_t
 get_id(enum ItemType type, struct vnode *vp, struct ucred *cred)
 {
-	xac_label_t *l;
+	xac_vnode_label_t *l;
 
 	if (!(l = label_resolvers[type](vp, cred)))
 		return (ACID_INVAL);
@@ -274,8 +320,61 @@ get_id(enum ItemType type, struct vnode *vp, struct ucred *cred)
 	return l->ids[type];
 }
 
+static
+box_rules_t*
+get_box_rules(struct proc *p)
+{
+	box_rules_t *br;
+	xac_proc_label_t *l;
+
+	l = proc_get_label(p);
+	if (l == NULL)
+		return (NULL);
+	br = &l->box_rules;
+	return br;
+}
+
 static int
-do_verdict(acid_t s, acid_t o, accmode_t accmode, struct verdict *v,
+do_verdict_selfbox(struct proc *p, acid_t o, accmode_t accmode, struct verdict *v,
+			int *access)
+{
+	int rc = 0;
+
+	if (!ACTIVE_OID(o)) {
+		return (0);
+	}
+
+	box_rules_t *brs = get_box_rules(p);
+	if (brs == NULL) {
+		xac_printf(1, "allow proc with no label to bypass selfbox\n");
+		return (0);
+	}
+	if (*brs == NULL)
+		return (0);
+
+	rc = lookup_box_rule(*brs, o, v);
+	if (rc == 0) {
+		xac_printf(7, "selfbox verdict[%u,%u,%u][%u]: allow:%d, "
+					   "flags:%d.%d.%d, log:%d%d%d\n",
+					v->v_ruleid_rd, v->v_ruleid_wr, v->v_ruleid_ex, o,
+					v->allow, v->v_access_rd, v->v_access_wr, v->v_access_ex,
+					v->v_log_rd, v->v_log_wr, v->v_log_ex);
+		for (*access = 0; *access < XAC_ACCESS_MAX; (*access)++) {
+			if ((accmode & to_accessmode[*access]) &&
+				(v->allow != v->access[*access])) {
+				rc = EPERM;
+				break;
+			}
+		}
+	} else if (rc == ENOENT) {
+		rc = 0;
+	}
+
+	return (rc);
+}
+
+static int
+do_verdict_ambient(acid_t s, acid_t o, accmode_t accmode, struct verdict *v,
 			int *access)
 {
 	int rc = 0;
@@ -283,6 +382,7 @@ do_verdict(acid_t s, acid_t o, accmode_t accmode, struct verdict *v,
 	if (!ACTIVE_SID(s) || !ACTIVE_OID(o))
 		return (ENOENT);
 
+	xac_printf(4, "lookup_rule(%u,%u)\n", s, o);
 	if (lookup_rule(s, o, v) == 0) {
 		xac_printf(7, "verdict[%u,%u,%u][%u,%u]: allow:%d, "
 					   "flags:%d%d%d, log:%d%d%d\n",
@@ -291,7 +391,7 @@ do_verdict(acid_t s, acid_t o, accmode_t accmode, struct verdict *v,
 					v->v_log_rd, v->v_log_wr, v->v_log_ex);
 		for (*access = 0; *access < XAC_ACCESS_MAX; (*access)++) {
 			if ((accmode & to_accessmode[*access]) &&
-				(v->allow - v->access[*access]) != 0) {
+				(v->allow != v->access[*access])) {
 				rc = EPERM;
 				break;
 			}
@@ -316,7 +416,7 @@ _xac_impl(char const *event_source, struct vnode *svp, struct vnode *ovp,
 	if (!(xac_status & XAC_STATUS_ENABLED) ||
 		!rulesets_ready() ||
 		!root_mounted() ||    /* implied by rulesets_ready() */
-		!svp)				  /* let kernel processes go through during bootup */
+		!svp)  				  /* let kernel processes go through during bootup */
 		return (0);
 
 	config_lock();
@@ -324,17 +424,25 @@ _xac_impl(char const *event_source, struct vnode *svp, struct vnode *ovp,
 	sid = get_id(XAC_SUBJECT, svp, cred);
 	oid = get_id(XAC_OBJECT, ovp, cred);
 
-	rc = do_verdict(sid, oid, accmode, &v, &access);
+	rc = do_verdict_selfbox(curproc, oid, accmode, &v, &access);
+	if (rc == ENOENT || rc == EPERM) {
+		// TODO Differentiate between failing of selfbox rules and ambient rules?
+		rc = EPERM;
+		sid = 0;
+		goto done;
+	}
+
+	rc = do_verdict_ambient(sid, oid, accmode, &v, &access);
 	if (rc == 0 || rc == EPERM)
 		goto done;
 
-	rc = do_verdict(sid, 0UL, accmode, &v, &access);
+	rc = do_verdict_ambient(sid, 0UL, accmode, &v, &access);
 	if (rc == EPERM) {
 		oid = 0;
 		goto done;
 	}
 
-	rc = do_verdict(0UL, oid, accmode, &v, &access);
+	rc = do_verdict_ambient(0UL, oid, accmode, &v, &access);
 	if (rc == EPERM) {
 		sid = 0;
 		goto done;
@@ -359,16 +467,21 @@ done:
 static void
 xac_destroy(struct mac_policy_conf *conf)
 {
-	uma_zdestroy(xac_label_zone);
+	uma_zdestroy(xac_vnode_label_zone);
+	uma_zdestroy(xac_proc_label_zone);
 }
 
 static void
 xac_init(struct mac_policy_conf *conf)
 {
-	xac_printf(1, "xac_init\n");
-	xac_label_zone = uma_zcreate("xac uma zone",
-								sizeof(xac_label_t),
-								NULL, NULL, NULL, NULL, 64, UMA_ZONE_ZINIT);
+	xac_vnode_label_zone = uma_zcreate("xac vnode label uma zone",
+								sizeof(xac_vnode_label_t),
+								NULL, NULL, NULL, NULL, UMA_ALIGN_PTR,
+								UMA_ZONE_ZINIT);
+	xac_proc_label_zone = uma_zcreate("xac proc label uma zone",
+								sizeof(xac_proc_label_t),
+								NULL, NULL, NULL, NULL, UMA_ALIGN_PTR,
+								UMA_ZONE_ZINIT);
 	xac_status |= XAC_STATUS_ENABLED;
 }
 
@@ -385,52 +498,107 @@ dump_rules(void)
 }
 
 static int
-xac_syscall(struct thread *td, int call, void *arg)
+check_syscall_authorization(struct proc *p, int call)
 {
-	int rc;
+	acid_t sid;
+	int rc = 0;
 
 	switch (call)
 	{
 	case MAC_XAC_SYSCALL_RELOAD:
-		xac_printf(1, "Got ruleset reload syscall req\n");
+    case MAC_XAC_SYSCALL_ENABLE:
+    case MAC_XAC_SYSCALL_DISABLE:
+    case MAC_XAC_SYSCALL_STATS:
+    case MAC_XAC_SYSCALL_DUMP:
+    case MAC_XAC_SYSCALL_LOGLEVEL:
+		if (!(xac_status & XAC_STATUS_ENABLED) || !rulesets_ready()) {
+			rc = 0;
+			break;
+		}
+
+		sid = get_id(XAC_SUBJECT, curproc->p_textvp, curproc->p_ucred);
+		if (!ACTIVE_SID(sid))
+			rc = EPERM;
+		else
+			rc = verify_admin_sp(sid);
+
+		break;
+
+	case MAC_XAC_SYSCALL_SELFBOX_RULE:
+	case MAC_XAC_SYSCALL_SELFBOX_ENTER:
+	default:
+		rc = 0;
+		break;
+	}
+
+	return (rc);
+}
+
+static int
+xac_syscall(struct thread *td, int call, void *arg)
+{
+	struct selfbox_args sba;
+	box_rules_t *brs;
+	int rc;
+
+	rc = check_syscall_authorization(curproc, call);
+	if (rc)
+		return (rc);
+
+	switch (call)
+	{
+	case MAC_XAC_SYSCALL_RELOAD:
 		rc = load_rulesets();
 		break;
-	
+
     case MAC_XAC_SYSCALL_ENABLE:
-		xac_printf(1, "Got activation syscall req\n");
 		xac_status |= XAC_STATUS_ENABLED;
 		rc = 0;
 		break;
 
     case MAC_XAC_SYSCALL_DISABLE:
-		xac_printf(1, "Got deactivation syscall req\n");
 		xac_status &= ~(XAC_STATUS_ENABLED);
 		rc = 0;
 		break;
 
     case MAC_XAC_SYSCALL_STATS:
-		xac_printf(1, "Got stats syscall req\n");
 		dump_stats();
 		rc = 0;
 		break;
 
     case MAC_XAC_SYSCALL_DUMP:
-		xac_printf(1, "Got dummp syscall req\n");
 		dump_rules();
 		rc = 0;
 		break;
 
     case MAC_XAC_SYSCALL_LOGLEVEL:
-		xac_printf(1, "Got change log level syscall request "
-						"from %d to %lu\n", current_log_level,
-						(uintptr_t)arg);
 		if ((uintptr_t)arg > LOG_LEVEL_MAX) {
-			xac_printf(1, "Invalid log level: %lu\n", (uintptr_t)arg);
 			rc = EINVAL;
 		} else {
 			current_log_level = (uintptr_t)arg;
 			rc = 0;
 		}
+		break;
+
+	case MAC_XAC_SYSCALL_SELFBOX_RULE:
+		rc = copyin(arg, &sba, sizeof(struct selfbox_args));
+		if (rc == 0) {
+			config_lock();
+			brs = get_box_rules(curproc);
+			if (brs)
+				rc = proc_selfbox(brs, &sba);
+			else
+				rc = EINVAL;
+			config_unlock();
+		}
+		break;
+
+	case MAC_XAC_SYSCALL_SELFBOX_ENTER:
+		brs = get_box_rules(curproc);
+		if (brs)
+			rc = proc_selfbox_enter(brs);
+		else
+			rc = EINVAL;
 		break;
 
 	default:
@@ -442,24 +610,48 @@ xac_syscall(struct thread *td, int call, void *arg)
 }
 
 static void
-xac_init_label(struct label *label)
+xac_init_vnode_label(struct label *label)
 {
-	SLOT_SET(label, alloc_xac_label());
-	if (SLOT(label) == NULL) {
-		xac_error("alloc failed\n");
+	SLOT_SET(label, alloc_xac_vnode_label());
+	if (VSLOT(label) == NULL) {
+		xac_error("vnode label alloc failed\n");
 		return;
 	}
-	SLOT(label)->l_subject_id = 0;
-	SLOT(label)->l_object_id = 0;
-	SLOT(label)->ruleset_gen = 0;
+	VSLOT(label)->l_subject_id = 0;
+	VSLOT(label)->l_object_id = 0;
+	VSLOT(label)->ruleset_gen = 0;
 }
 
 static void
-xac_destroy_label(struct label *label)
+xac_destroy_vnode_label(struct label *label)
 {
 	if (!label)
 		return;
-	free_xac_label(SLOT(label));
+	free_xac_vnode_label(VSLOT(label));
+	SLOT_SET(label, NULL);
+}
+
+static void
+xac_init_proc_label(struct label *label)
+{
+	SLOT_SET(label, alloc_xac_proc_label());
+	if (PSLOT(label) == NULL) {
+		xac_error("proc label alloc failed\n");
+		return;
+	}
+	box_rules_t *cbr = get_box_rules(curproc);
+	if (cbr == NULL || *cbr == NULL)
+		PSLOT(label)->box_rules = NULL;
+	else
+		PSLOT(label)->box_rules = dup_box_ruleset(*cbr);
+}
+
+static void
+xac_destroy_proc_label(struct label *label)
+{
+	if (!label)
+		return;
+	free_xac_proc_label(PSLOT(label));
 	SLOT_SET(label, NULL);
 }
 
@@ -480,10 +672,13 @@ xac_internalize_label(struct label *label, char *element_name,
 static int
 xac_proc_check_debug(struct ucred *cred, struct proc *p)
 {
+	if (!(xac_status & XAC_STATUS_ENABLED))
+		return (0);
+
 	if (p->p_textvp == NULL)
 		return (0);
 
-	return xac_impl(curproc->p_textvp, p->p_textvp, cred, VREAD | VEXEC | VWRITE);
+	return (EPERM);
 }
 
 static int
@@ -712,7 +907,17 @@ xac_vnode_check_unlink(struct ucred *cred, struct vnode *dvp,
     struct label *dvplabel, struct vnode *vp, struct label *vplabel,
     struct componentname *cnp)
 {
-	return xac_impl(curproc->p_textvp, dvp, cred, VWRITE);
+	int rc;
+
+	rc = xac_impl(curproc->p_textvp, dvp, cred, VWRITE);
+	if (rc != 0)
+		return (rc);
+
+	rc = xac_impl(curproc->p_textvp, vp, cred, VWRITE);
+	if (rc != 0)
+		return (rc);
+
+	return (0);
 }
 
 static int
@@ -730,13 +935,41 @@ xac_vnode_create_extattr(struct ucred *cred, struct mount *mp,
 	return xac_impl(curproc->p_textvp, vp, cred, VWRITE);
 }
 
+static int
+xac_priv_check(struct ucred *cred, int priv)
+{   
+	if (!(xac_status & XAC_STATUS_ENABLED))
+		return (0);
+
+	switch (priv) {
+	case PRIV_KMEM_WRITE: 
+		return (EPERM);
+		break;
+
+	default:
+		break;
+	}
+
+	return (0);
+}
+
+// TODO
+static int
+xac_cred_check_visible(struct ucred *cr1, struct ucred *cr2)
+{
+	return (0);
+}
+
 static struct mac_policy_ops xac_ops =
 {
 	.mpo_destroy = xac_destroy,
 	.mpo_init = xac_init,
 	.mpo_syscall = xac_syscall,
 
+	.mpo_proc_init_label = xac_init_proc_label,
+	.mpo_proc_destroy_label = xac_destroy_proc_label,
 	.mpo_proc_check_debug = xac_proc_check_debug,
+	.mpo_cred_check_visible = xac_cred_check_visible,
 
 	.mpo_vnode_check_access = xac_vnode_check_access,
 	.mpo_vnode_check_chdir = xac_vnode_check_chdir,
@@ -770,10 +1003,11 @@ static struct mac_policy_ops xac_ops =
 	.mpo_vnode_check_unlink = xac_vnode_check_unlink,
 	.mpo_vnode_check_write = xac_vnode_check_write,
 	.mpo_vnode_create_extattr = xac_vnode_create_extattr,
-	.mpo_vnode_destroy_label = xac_destroy_label,
+	.mpo_vnode_destroy_label = xac_destroy_vnode_label,
 	.mpo_vnode_externalize_label = xac_externalize_label,
-	.mpo_vnode_init_label = xac_init_label,
+	.mpo_vnode_init_label = xac_init_vnode_label,
 	.mpo_vnode_internalize_label = xac_internalize_label,
+	.mpo_priv_check = xac_priv_check,
 };
 
 #ifdef DEBUG
@@ -781,5 +1015,6 @@ MAC_POLICY_SET(&xac_ops, mac_xac, "TrustedBSD MAC/XAC",
     MPC_LOADTIME_FLAG_UNLOADOK, &mac_xac_slot);
 #else
 MAC_POLICY_SET(&xac_ops, mac_xac, "TrustedBSD MAC/XAC",
-    0, &mac_xac_slot);
+		// XXX
+    MPC_LOADTIME_FLAG_UNLOADOK, &mac_xac_slot);
 #endif

@@ -31,8 +31,8 @@ project(xactl VERSION 0.0.1 LANGUAGES C CXX)
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 14)
 
-set (CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address -fsanitize=undefined -O0")
-set (CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address -fsanitize=undefined -O0")
+set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address -fsanitize=undefined -O0")
+set(CMAKE_LINKER_FLAGS_DEBUG "${CMAKE_LINKER_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address -fsanitize=undefined -O0")
 
 include_directories(include
                     /usr/src/sys
@@ -49,6 +49,11 @@ add_executable(${PROJECT_NAME}
                 args_parser.cpp
 )
 
+set(LIBXAC_SOURCES xac_lib.c xac_lib.h)
+
+add_library(xac STATIC ${LIBXAC_SOURCES})
+add_library(xac_static SHARED ${LIBXAC_SOURCES})
+
 target_compile_definitions(
 	${PROJECT_NAME}
 	PUBLIC "$<$<CONFIG:DEBUG>:DEBUG>")
@@ -57,4 +62,15 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
                         crypto
 )
 
+enable_testing()
+add_executable(${PROJECT_NAME}_sbtest_p_01
+				tests/sbtest_p.cpp
+				tests/sbtest_common.h)
+target_link_libraries(${PROJECT_NAME}_sbtest_p_01 xac)
+add_executable(${PROJECT_NAME}_sbtest_c_01
+				tests/sbtest_c.cpp
+				tests/sbtest_common.h)
+add_test(NAME ${PROJECT_NAME}_sbtest_01
+		 COMMAND ${PROJECT_NAME}_sbtest_p_01)
+ 
 install(TARGETS ${PROJECT_NAME} DESTINATION bin)

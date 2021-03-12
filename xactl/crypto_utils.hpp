@@ -34,3 +34,4 @@
 
 extern std::string digest_string(std::string str);
 extern std::shared_ptr<unsigned char> digest_file(std::string path);
+extern std::shared_ptr<unsigned char> digest_file(int fd);

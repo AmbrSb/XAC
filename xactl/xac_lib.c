@@ -26,13 +26,64 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/types.h>
-#include <sys/param.h>
-#include <sys/malloc.h>
-#include <sys/kernel.h>
+#include <unistd.h>
+#include <stdio.h>
+#include <sys/stat.h>
+#include <sys/mac.h>
 
+#include "mac_xac.h"
 #include "xac_common.h"
 
-MALLOC_DEFINE(M_XAC, "mac_xac", "MAC access authentication data");
+int
+xacsb_enter(void)
+{
+	int rc;
 
-int current_log_level = 1;
+	rc = mac_syscall("mac_xac", MAC_XAC_SYSCALL_SELFBOX_ENTER, NULL);
+
+	return (rc);
+}
+
+int
+xacsb_allow_path(char const *path, mode_t mode)
+{
+	struct selfbox_args arg;
+	int rc;
+
+	struct stat s;
+	rc = stat(path, &s);
+	if (rc)
+		return (rc);
+
+	arg.type = MAC_XAC_OBJECT_VNODE;
+	arg.file_rule.i_num = s.st_ino;
+	arg.file_rule.st_dev = s.st_dev;
+	arg.file_rule.access = mode;
+	arg.file_rule.allow = 1;
+	arg.file_rule.log = 1;
+
+	rc = mac_syscall("mac_xac", MAC_XAC_SYSCALL_SELFBOX_RULE, &arg);
+	return (rc);
+}
+
+int
+xacsb_allow_fd(int fd, mode_t mode)
+{
+	struct selfbox_args arg;
+	int rc;
+
+	struct stat s;
+	rc = fstat(fd, &s);
+	if (rc)
+		return (rc);
+
+	arg.type = MAC_XAC_OBJECT_VNODE;
+	arg.file_rule.i_num = s.st_ino;
+	arg.file_rule.st_dev = s.st_dev;
+	arg.file_rule.access = mode;
+	arg.file_rule.allow = 1;
+	arg.file_rule.log = 1;
+
+	rc = mac_syscall("mac_xac", MAC_XAC_SYSCALL_SELFBOX_RULE, &arg);
+	return (rc);
+}

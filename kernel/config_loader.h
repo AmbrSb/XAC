@@ -31,6 +31,8 @@
 #include <sys/queue.h>
 #include <crypto/sha2/sha512.h>
 
+#include "xac_common.h"
+
 
 #define XAC_CONFIG_API extern
 
@@ -91,6 +93,8 @@ struct object {
 	uint16_t ref_cnt;
 };
 
+typedef void* box_rules_t;
+
 struct verdict
 {
 	uint32_t ruleid[XAC_ACCESS_MAX];
@@ -149,6 +153,16 @@ XAC_CONFIG_API acid_t get_subjectid(struct subject *sub);
 XAC_CONFIG_API acid_t get_objectid(struct object *obj);
 XAC_CONFIG_API struct subject* get_subject_byid(acid_t sid);
 XAC_CONFIG_API struct object* get_object_byid(acid_t oid);
-XAC_CONFIG_API int lookup_rule(uint32_t sid, uint32_t oid, struct verdict *verdict);
+XAC_CONFIG_API int lookup_rule(uint32_t sid, uint32_t oid,
+					struct verdict *verdict);
 XAC_CONFIG_API int rulesets_ready(void);
 XAC_CONFIG_API uint64_t get_ruleset_gen(void);
+
+XAC_CONFIG_API int lookup_box_rule(box_rules_t br, uint32_t oid,
+					struct verdict *verdict);
+XAC_CONFIG_API void free_box_rules(box_rules_t br);
+XAC_CONFIG_API uint64_t proc_selfbox(box_rules_t *br,
+					struct selfbox_args const *sba);
+XAC_CONFIG_API int proc_selfbox_enter(box_rules_t *brs);
+XAC_CONFIG_API box_rules_t dup_box_ruleset(box_rules_t brs);
+XAC_CONFIG_API int verify_admin_sp(acid_t sid);

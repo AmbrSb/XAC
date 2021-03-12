@@ -26,13 +26,21 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <sys/types.h>
-#include <sys/param.h>
-#include <sys/malloc.h>
-#include <sys/kernel.h>
+#pragma once
 
-#include "xac_common.h"
+#define TARGET_FILE "target"
 
-MALLOC_DEFINE(M_XAC, "mac_xac", "MAC access authentication data");
 
-int current_log_level = 1;
+inline static
+int touch_file(char const *path)
+{
+	FILE *f = fopen(TARGET_FILE, "w");
+	if (!f) {
+		perror("fopen");
+		std::cerr << "Parent cannot create target file\n";
+		return (1);
+	}
+	fclose(f);
+	return (0);
+}
+

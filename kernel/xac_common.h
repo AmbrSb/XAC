@@ -42,6 +42,9 @@ typedef uint32_t flag_t;
 #define INITIAL_SUBJECTS_CNT 128;
 #define INITIAL_OBJECTS_CNT 128;
 
+#define ACTIVE_SID(s) (s != ACID_INVAL)
+#define ACTIVE_OID(o) (o != ACID_INVAL)
+
 #define xac_printf(level, fmt, ...)                              \
     do                                                            \
     {                                                             \
@@ -59,3 +62,34 @@ typedef uint32_t flag_t;
 	xac_printf(0, msg, ##__VA_ARGS__)
 
 extern int current_log_level;
+
+enum mac_xac_object_type {
+	MAC_XAC_OBJECT_VNODE,
+	MAC_XAC_OBJECT_MOUNT,
+	MAC_XAC_OBJECT_PIPE,
+	MAC_XAC_OBJECT_SOCKET,
+	MAC_XAC_OBJECT_SHM,
+	MAC_XAC_OBJECT_SEM,
+	MAC_XAC_OBJECT_PROC,
+	MAC_XAC_OBJECT_THREAD,
+	MAC_XAC_OBJECT_SYSTEM,
+	MAC_XAC_OBJECT_DEBUG,
+	MAC_XAC_OBJECT_DEVFS,
+	MAC_XAC_OBJECT_BPFDESC,
+	MAC_XAC_OBJECT_PRIV,
+	MAC_XAC_OBJECT_KENV,
+	MAC_XAC_OBJECT_KLD,
+};
+
+struct selfbox_args {
+	enum mac_xac_object_type type;
+	union {
+		struct {
+			uint64_t i_num;
+			uint64_t st_dev;
+			accmode_t access;
+			uint8_t allow;
+			uint8_t log;
+		} file_rule;
+	};
+};

@@ -122,20 +122,38 @@ digest_string(std::string str)
 std::shared_ptr<unsigned char>
 digest_file(std::string path)
 {
-	constexpr uint32_t req = 1024;
-	unsigned char buf[req];
-	int len;
 	int fd;
-	SHA512_CTX ctx;
-	std::shared_ptr<unsigned char> digest;
 
-	digest = std::shared_ptr<unsigned char> (
-			(unsigned char*)malloc(SHA512_DIGEST_LENGTH), free);
 	fd = open(path.c_str(), O_RDONLY);
 	if (fd < 0) {
 		perror("open");
 		throw InvalidPathError{};
 	}
+    return digest_file(fd);
+}
+
+/**
+ * Calculates SHA512 hash of contents of a file through
+ * an open file descriptor.
+ * 
+ * @param fd An open file descriptor for the content of which
+ * 				the sha512 disgest is to be calculated.
+ * 
+ * @return Returns a shared_ptr to the binary buffer holding the result.
+ */
+std::shared_ptr<unsigned char>
+digest_file(int fd)
+{
+	constexpr uint32_t req = 1024;
+	unsigned char buf[req];
+	int len;
+	SHA512_CTX ctx;
+	std::shared_ptr<unsigned char> digest;
+
+	lseek(fd, 0, SEEK_SET);
+
+	digest = std::shared_ptr<unsigned char> (
+			(unsigned char*)malloc(SHA512_DIGEST_LENGTH), free);
 	SHA512_Init(&ctx);
 	while ((len = read(fd, buf, req)) > 0)
 		SHA512_Update(&ctx, buf, len);

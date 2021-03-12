@@ -95,10 +95,10 @@ args_parser(int argc, char *argv[],
 	 * The option array is built using the contents of the switch_opts
 	 * map defined above.
 	 */
-	option *long_options = (option*)malloc(sizeof(long_options) * switch_opts.size());
+	option *long_options = (option*)malloc(sizeof(option) * switch_opts.size());
 	if (long_options == nullptr)
 	{
-		throw options_error{"Not enough memory to allocate long_options: "s +
+		throw options_error{"Failed to allocate long_options: "s +
 							std::string{__func__}};
 	}
 	std::string shortopts = "+";
@@ -115,8 +115,12 @@ args_parser(int argc, char *argv[],
 	}
 
 	int opt, option_index = 0;
+#ifdef USE_LONG_OPTS
 	while ((opt = getopt_long(argc, argv, shortopts.c_str(), long_options,
 								&option_index)) != -1) {
+#else
+	while ((opt = getopt(argc, argv, shortopts.c_str())) != -1) {
+#endif
 		/**
 		 * Handle error cases
 		 */

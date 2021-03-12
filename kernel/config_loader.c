@@ -46,6 +46,7 @@
 #define RULES_HASHTABLE_SIZE 	(128 * 1024)
 #define SUBJECTS_HASHTABLE_SIZE	(512)
 #define OBJECTS_HASHTABLE_SIZE	(512)
+#define BOXRULES_HASHTABLE_SIZE (256)
 
 #define MAX_RULESETS 3
 #define MAX_SUBJECTS_CNT (10000  * MAX_RULESETS)
@@ -85,6 +86,24 @@ char const *perm_str[] = {
 	"EXECUTE"
 };
 
+#define inc_ref(x)      \
+	do                  \
+	{                   \
+		(x->ref_cnt)++; \
+	} while (0);
+
+#define dec_ref(x)          \
+	do                      \
+	{                       \
+		(x->ref_cnt)--;     \
+	} while (0);
+
+struct rule_stats {
+	counter_u64_t match_cnt;
+	uint64_t last_match_time;
+	uint64_t load_time;
+};
+
 struct rule {
 	struct ruleset *rs;
 	/**
@@ -98,14 +117,33 @@ struct rule {
 	uint32_t ruleid;
 	uint32_t subid;
 	uint32_t objid;
-	counter_u64_t match_cnt;
-	uint64_t last_match_time;
-	uint64_t load_time;
+	struct rule_stats stats;
 	struct verdict *v;
+};
+
+struct box_rule {
+	/**
+	 * Box list link in a bucket of boxes hashtable of a process
+	 */
+	SLIST_ENTRY(box_rule) next;
+	uint32_t objid;
+	struct rule_stats stats;
+	struct verdict v;
+};
+
+SLIST_HEAD(box_rules_hashhead, box_rule);
+
+struct box_ruleset {
+	struct box_rules_hashhead *rules_htbl;
+	u_long rules_hmask;
+	struct rule_stats stats;
+	int active;
 };
 
 static uma_zone_t xac_verdict_zone;
 static uma_zone_t xac_rule_zone;
+static uma_zone_t xac_box_rule_zone;
+static uma_zone_t xac_box_ruleset_zone;
 
 /**
  * A global list of all loaded rulesets. Each ruleset is loaded
@@ -139,10 +177,10 @@ struct ruleset {
 	 * Indicates how many time this ruleset has matched with a
 	 * request in MAC framework. The match might be partial.
 	 */
-	counter_u64_t match_cnt;
-	uint64_t last_match_time;
-	uint64_t load_time;
+	struct rule_stats stats;
 };
+
+static acid_t admin_subid;
 
 SLIST_HEAD(subjects_hashhead, subject);
 SLIST_HEAD(objects_hashhead, object);
@@ -177,6 +215,8 @@ struct blob
 	uint64_t len;
 };
 
+static acid_t add_or_ref_subject(subject_personality_t *sp);
+static acid_t add_or_ref_object(object_personality_t *op);
 
 #define SUPPRESS_UNUSED_WARNING(f) (void)f
 
@@ -211,12 +251,12 @@ struct blob
 		T v;                                                             \
 		if (b->b + b->len < b->cur + sizeof(T))                          \
 		{                                                                \
-			xac_printf(0, "reading past end of blob!\n");               \
+			xac_printf(0, "reading past end of blob!\n");                \
 			return (EINVAL);                                             \
 		}                                                                \
 		memcpy(&v, b->cur, sizeof(T));                                   \
 		if (msg)                                                         \
-			xac_printf(7, "%s: %u\n", msg, (uint32_t)val_to_printf(v)); \
+			xac_printf(7, "%s: %u\n", msg, (uint32_t)val_to_printf(v));  \
 		(b->cur) += sizeof(T);                                           \
 		*out = v;                                                        \
 		return (0);                                                      \
@@ -235,12 +275,12 @@ struct blob
 		T *dptr;                                                             \
 		if (b->b + b->len < b->cur + sizeof(T))                              \
 		{                                                                    \
-			xac_printf(0, "reading past end of blob!\n");                   \
+			xac_printf(0, "reading past end of blob!\n");                    \
 			return (EINVAL);                                                 \
 		}                                                                    \
 		dptr = (T *)b->cur;                                                  \
 		if (msg)                                                             \
-			xac_printf(7, "%s: %u\n", msg, (u_int32_t)ptr_to_printf(dptr)); \
+			xac_printf(7, "%s: %u\n", msg, (u_int32_t)ptr_to_printf(dptr));  \
 		(b->cur) += sizeof(T);                                               \
 		*out = dptr;                                                         \
 		return (0);                                                          \
@@ -346,6 +386,13 @@ rule_hash(struct rule *r)
 	return (sh + oh);
 }
 
+static uint32_t
+box_rule_hash(struct box_rule *br)
+{
+	uint32_t oh = object_hash(&objects[br->objid].op);
+	return (oh);
+}
+
 uint64_t
 get_ruleset_gen(void)
 {
@@ -416,6 +463,9 @@ lookup_subject(subject_personality_t *sp, struct subject **sub)
 	struct subjects_hashhead *sh;
 	int rc;
 
+	if (subjects_htbl == NULL)
+		return (ENOENT);
+
 	sh = &subjects_htbl[subject_hash(sp) & subjects_hmask];
 	SLIST_FOREACH(s, sh, next) {
 		if (!subject_personality_cmp(sp, &s->sp)) {
@@ -448,6 +498,9 @@ lookup_object(object_personality_t *op, struct object **obj)
 	struct object *o, *match = NULL;
 	struct objects_hashhead *oh;
 	int rc;
+
+	if (objects_htbl == NULL)
+		return (ENOENT);
 
 	oh = &objects_htbl[object_hash(op) & objects_hmask];
 	SLIST_FOREACH(o, oh, next) {
@@ -482,15 +535,6 @@ lookup_rule_ruleset(uint32_t sid, uint32_t oid, struct ruleset *rs, struct verdi
 	struct rules_hashhead *rh = &rs->rules_htbl[rhash & rs->rules_hmask];
 	SLIST_FOREACH(r, rh, next) {
 		if (r->subid == sid && r->objid == oid) {
-			// XXX
-			// if (!match) {
-			// 	match = r;
-			// 	*verdict = *match->v;
-			// 	for (int i = 0; i < XAC_ACCESS_MAX; i++) {
-			// 		verdict->ruleid[i] = match->ruleid;
-			// 	}
-			// 	continue;
-			// }
 			match = r;
 			uint32_t ruleid = match->ruleid;
 			int na = !match->v->allow;
@@ -570,8 +614,8 @@ lookup_rule(uint32_t sid, uint32_t oid, struct verdict *verdict)
 		rc = lookup_rule_ruleset(sid, oid, rs, &v);
 		if (rc == 0) {
 			matched = 1;
-			rs->last_match_time = time_uptime;
-			counter_u64_add(rs->match_cnt, 1);
+			rs->stats.last_match_time = time_uptime;
+			counter_u64_add(rs->stats.match_cnt, 1);
 		}
 	}
 
@@ -585,14 +629,28 @@ lookup_rule(uint32_t sid, uint32_t oid, struct verdict *verdict)
 static void
 destroy_rule(struct rule *r)
 {
-	if (r->v)
-		uma_zfree(xac_verdict_zone, r->v);
+	if (ACTIVE_SID(r->subid) && r->subid > 0)
+		dec_ref(get_subject_byid(r->subid));
+	if (ACTIVE_OID(r->objid) && r->objid > 0)
+		dec_ref(get_object_byid(r->objid));
 	r->subid = 0;
 	r->objid = 0;
-	counter_u64_free(r->match_cnt);
+	counter_u64_free(r->stats.match_cnt);
+	if (r->v)
+		uma_zfree(xac_verdict_zone, r->v);
 	r->v = NULL;
 	r->rs = NULL;
 	uma_zfree(xac_rule_zone, r);
+}
+
+static void
+free_box_rule(struct box_rule *br)
+{
+	br->objid = 0;
+	counter_u64_free(br->stats.match_cnt);
+	if (ACTIVE_OID(br->objid) && br->objid > 0)
+		dec_ref(get_object_byid(br->objid));
+	uma_zfree(xac_box_rule_zone, br);
 }
 
 static struct verdict*
@@ -616,16 +674,67 @@ create_rule(struct ruleset *rs, uint32_t ruleid, uint32_t sid,
 	v = create_verdict(flags);
 	r = uma_zalloc(xac_rule_zone, 0);
 	r->ruleid = ruleid;
-	r->match_cnt = counter_u64_alloc(M_WAITOK);
-	counter_u64_zero(r->match_cnt);
-	r->last_match_time = 0;
-	r->load_time = time_uptime;
+	r->stats.match_cnt = counter_u64_alloc(M_WAITOK);
+	counter_u64_zero(r->stats.match_cnt);
+	r->stats.last_match_time = 0;
+	r->stats.load_time = time_uptime;
 	r->subid = sid;
 	r->objid = oid;
 	r->v = v;
 	r->rs = rs;
 
 	return (r);
+}
+
+static struct box_rule*
+create_box_rule(uint64_t i_num, uint64_t st_dev,
+				accmode_t access,
+				uint8_t allow, uint8_t log)
+{
+#define VFLAG_INT(f, t) ((f & t) != 0)
+	struct box_rule *br;
+	uint32_t objid;
+	object_personality_t op;
+	struct verdict v;
+
+	op = (object_personality_t){i_num, st_dev, 0};
+
+	v.allow = allow;
+	v.access[XAC_READ] = VFLAG_INT(access, VREAD);
+	v.access[XAC_WRITE] = VFLAG_INT(access, VWRITE);
+	v.access[XAC_EXEC] = VFLAG_INT(access, VEXEC);
+	v.log[XAC_READ] = log;
+	v.log[XAC_WRITE] = log;
+	v.log[XAC_EXEC] = log;
+
+	objid = add_or_ref_object(&op);
+
+	br = uma_zalloc(xac_box_rule_zone, 0);
+	br->objid = objid;
+	br->v = v;
+	br->stats.match_cnt = counter_u64_alloc(M_WAITOK);
+	counter_u64_zero(br->stats.match_cnt);
+
+	return (br);
+}
+
+static struct box_rule*
+dup_box_rule(struct box_rule *r)
+{
+	struct box_rule *nr;
+	struct object *obj;
+	int access;
+
+	obj = get_object_byid(r->objid);
+
+	nr = create_box_rule(obj->op.i_number, obj->op.st_dev, 0, 0, 0);
+	for (access = 0; access < XAC_ACCESS_MAX; (access)++) {
+		nr->v.access[access] = r->v.access[access];
+		nr->v.log[access] = r->v.log[access];
+	}
+	nr->v.allow = r->v.allow;
+
+	return (nr);
 }
 
 static void
@@ -661,13 +770,76 @@ create_ruleset(void)
 	rs = malloc(sizeof(struct ruleset), M_XAC, M_WAITOK | M_ZERO);
 	if (!rs)
 		return (NULL);
-	rs->match_cnt = counter_u64_alloc(M_WAITOK);
-	counter_u64_zero(rs->match_cnt);
-	rs->last_match_time = 0;
-	rs->load_time = time_uptime;
+	rs->stats.match_cnt = counter_u64_alloc(M_WAITOK);
+	counter_u64_zero(rs->stats.match_cnt);
+	rs->stats.last_match_time = 0;
+	rs->stats.load_time = time_uptime;
 	rs->rules_htbl = hashinit(RULES_HASHTABLE_SIZE, M_XAC, &rs->rules_hmask);
 
 	return (rs);
+}
+
+static struct box_ruleset*
+create_box_ruleset(void)
+{
+	struct box_ruleset *brs;
+
+	brs = uma_zalloc(xac_box_ruleset_zone, 0);
+	if (!brs)
+		return (NULL);
+	brs->active = 0;
+	brs->stats.match_cnt = counter_u64_alloc(M_WAITOK);
+	counter_u64_zero(brs->stats.match_cnt);
+	brs->stats.last_match_time = 0;
+	brs->stats.load_time = time_uptime;
+	brs->rules_htbl = hashinit(BOXRULES_HASHTABLE_SIZE, M_XAC, &brs->rules_hmask);
+
+	return (brs);
+}
+
+box_rules_t
+dup_box_ruleset(box_rules_t br)
+{
+	struct box_ruleset *brs, *nbrs;
+	struct box_rule *brp;
+	struct box_rules_hashhead *rh, *nrh;
+	struct box_rule *nr;
+
+	brs = (struct box_ruleset*) br;
+	nbrs = create_box_ruleset();
+
+	for (int i = 0; i < brs->rules_hmask; i++) {
+		rh = &brs->rules_htbl[i];
+		nrh = &nbrs->rules_htbl[i];
+		SLIST_FOREACH(brp, rh, next) {
+			nr = dup_box_rule(brp);
+			SLIST_INSERT_HEAD(nrh, nr, next);
+		}
+	}
+	nbrs->active = brs->active;
+
+	return (box_rules_t)nbrs;
+}
+
+void
+free_box_rules(box_rules_t br)
+{
+	struct box_ruleset *brs;
+	struct box_rule *brp, *brpt;
+	struct box_rules_hashhead *rh;
+
+	brs = (struct box_ruleset*)br;
+	if (brs == NULL)
+		return;
+
+	for (int i = 0; i < brs->rules_hmask; i++) {
+		rh = &brs->rules_htbl[i];
+		SLIST_FOREACH_SAFE(brp, rh, next, brpt) {
+			SLIST_REMOVE(rh, brp, box_rule, next);
+			free_box_rule(brp);
+		}
+	}
+	hashdestroy(brs->rules_htbl, M_XAC, brs->rules_hmask);
 }
 
 static void
@@ -717,7 +889,7 @@ static void
 destroy_ruleset(struct ruleset *rs)
 {
 	hashdestroy(rs->rules_htbl, M_XAC, rs->rules_hmask);
-	counter_u64_free(rs->match_cnt);
+	counter_u64_free(rs->stats.match_cnt);
 	free(rs, M_XAC);
 }
 
@@ -763,13 +935,13 @@ load_ruleset_blob(char const *path, struct blob *rb,
 	error = vn_open(&nid, &flags, 0, NULL);
 	NDFREE(&nid, NDF_ONLY_PNBUF);
 	if (error != 0) {
-		xac_printf(1, "vn_open failed\n");
+		xac_printf(0, "vn_open failed\n");
 		goto failed_noclose;
 	}
 
 	error = VOP_GETATTR(nid.ni_vp, &va, curthread->td_ucred);
 	if (error != 0) {
-		xac_printf(1, "VOP_GETATTR failed\n");
+		xac_printf(0, "VOP_GETATTR failed\n");
 		goto failed;
 	}
 
@@ -814,7 +986,7 @@ load_ruleset_blob(char const *path, struct blob *rb,
 		auio.uio_resid = aiov.iov_len;
 		error = VOP_READ(nid.ni_vp, &auio, 0, curthread->td_ucred);
 		if (error) {
-			xac_printf(1, "VOP_READ failed\n");
+			xac_printf(0, "VOP_READ failed\n");
 			goto failed;
 		}
 		nread = rsize - auio.uio_resid;
@@ -837,7 +1009,7 @@ realloc_subjects(void)
 	int rc = 0;
 
 	subjects_cap += INITIAL_SUBJECTS_CNT;
-	subjects = realloc(subjects, subjects_cap * sizeof(struct subject), M_XAC, M_WAITOK);
+	subjects = realloc(subjects, subjects_cap * sizeof(struct subject), M_XAC, M_WAITOK | M_ZERO);
 	if (!subjects) {
 		xac_printf(0, "Memory allocation for subjects failed.\n");
 		rc = ENOMEM;
@@ -852,7 +1024,7 @@ realloc_objects(void)
 	int rc = 0;
 
 	objects_cap += INITIAL_OBJECTS_CNT;
-	objects = realloc(objects, objects_cap * sizeof(struct object), M_XAC, M_WAITOK);
+	objects = realloc(objects, objects_cap * sizeof(struct object), M_XAC, M_WAITOK | M_ZERO);
 
 	if (!objects) {
 		xac_printf(0, "Memory allocation for objects failed.\n");
@@ -906,12 +1078,6 @@ add_object(object_personality_t *op, acid_t *oid)
 	return (rc);
 }
 
-#define inc_ref(x)      \
-	do                  \
-	{                   \
-		(x->ref_cnt)++; \
-	} while (0);
-
 static acid_t
 add_or_ref_subject(subject_personality_t *sp)
 {
@@ -944,11 +1110,13 @@ add_or_ref_object(object_personality_t *op)
 	if (rc == 0) {
 		inc_ref(o);
 		oid = get_objectid(o);
-		xac_printf(7, "new object matched with existing object. oid: %u\n",
+		xac_printf(3, "new object matched with existing object. oid: %u\n",
 					oid);
 	} else {
 		if(add_object(op, &oid))
 			oid = ACID_INVAL;
+		xac_printf(3, "new object created. oid: %u\n",
+					oid);
 	}
 
 	return (oid);
@@ -1001,7 +1169,7 @@ deserialize_ruleset_blob(struct blob *rsb, struct ruleset **rsp)
 #define VERIFY_OBJ_CNT(c, m)            \
 	if (c > MAX_OBJECTS_CNT)            \
 	{                                   \
-		xac_printf(0, m ": %u.\n", c); \
+		xac_printf(0, m ": %u.\n", c);  \
 		rc = ENOMEM;                    \
 		goto out;                       \
 	}
@@ -1019,6 +1187,13 @@ deserialize_ruleset_blob(struct blob *rsb, struct ruleset **rsp)
 
 #define _(expr) \
 	({ rc = (expr); if (rc) goto out; })
+
+	/**
+	 * Read xactl personality from the config. This will be used to limit
+	 * what process can make certain system calls to mac_xac kernel module.
+	 */
+	_(read_ptr_subject_personality_t(rsb, &sp, "admin_sp"));
+	admin_subid = add_or_ref_subject(sp);
 
 	/**
 	 * We first read objects counts to verify their size is within
@@ -1048,19 +1223,20 @@ deserialize_ruleset_blob(struct blob *rsb, struct ruleset **rsp)
 	 * and object indices of this reulset, to indices to the global
 	 * list of subject and object indices.
 	 */
-	submap = malloc(sizeof(acid_t) * subjects_cnt, M_XAC, M_WAITOK | M_ZERO);
+	submap = malloc(sizeof(acid_t) * (subjects_cnt + 1), M_XAC, M_WAITOK | M_ZERO);
 	if (!submap) {
 		xac_printf(0, "Memory allocation for subject map faild.\n");
 		rc = ENOMEM;
 		goto out;
 	}
 
-	objmap = malloc(sizeof(acid_t) * objects_cnt, M_XAC, M_WAITOK | M_ZERO);
+	objmap = malloc(sizeof(acid_t) * (objects_cnt + 1), M_XAC, M_WAITOK | M_ZERO);
 	if (!objmap) {
 		xac_printf(0, "Memory allocation for object map faild.\n");
 		rc = ENOMEM;
 		goto out;
 	}
+
 
 	/**
 	 * Read subject/object personality pointers and use them to
@@ -1230,10 +1406,21 @@ init_memory_management(void)
 {
 	xac_rule_zone = uma_zcreate("xac rule record zone",
 								sizeof(struct rule),
-								NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, UMA_ZONE_ZINIT);
+								NULL, NULL, NULL, NULL, UMA_ALIGN_PTR,
+								UMA_ZONE_ZINIT);
+	xac_box_rule_zone = uma_zcreate("xac box rule zone",
+								sizeof(struct box_rule),
+								NULL, NULL, NULL, NULL, UMA_ALIGN_PTR,
+								UMA_ZONE_ZINIT);
+	xac_box_ruleset_zone = uma_zcreate("xac box ruleset record zone",
+								sizeof(struct box_ruleset),
+								NULL, NULL, NULL, NULL, UMA_ALIGN_PTR,
+								UMA_ZONE_ZINIT);
 	xac_verdict_zone = uma_zcreate("xac verdict record zone",
 								sizeof(struct verdict),
-								NULL, NULL, NULL, NULL, UMA_ALIGN_PTR, UMA_ZONE_ZINIT);
+								NULL, NULL, NULL, NULL, UMA_ALIGN_PTR,
+								UMA_ZONE_ZINIT);
+
 	uma_zone_set_max(xac_rule_zone, MAX_RULES_CNT);
 	uma_zone_set_max(xac_verdict_zone, MAX_RULES_CNT);
 }
@@ -1242,6 +1429,8 @@ static void
 cleanup_memory_management(void)
 { 
 	uma_zdestroy(xac_rule_zone);
+	uma_zdestroy(xac_box_rule_zone);
+	uma_zdestroy(xac_box_ruleset_zone);
 	uma_zdestroy(xac_verdict_zone);
 }
 
@@ -1258,6 +1447,14 @@ destroy_rulesets(int offset)
 
 	if (offset == 0)
 		rulesets_status = NOT_LOADED;
+
+	SLIST_FOREACH_SAFE(rs, &rulesets, next, trs) {
+		if (offset--)
+			continue;
+		purge_rules(rs);
+		destroy_ruleset(rs);
+		SLIST_REMOVE(&rulesets, rs, ruleset, next);
+	}
 
 	if (offset == 0) {
 		if (subjects_htbl) {
@@ -1286,18 +1483,90 @@ destroy_rulesets(int offset)
 		if (objects)
 			free(objects, M_XAC);
 
+		subjects_cnt = 0;
+		objects_cnt = 0;
+		subjects_cap = 0;
+		objects_cap = 0;
 		subjects = NULL;
 		objects = NULL;
 	}
+}
 
-	SLIST_FOREACH_SAFE(rs, &rulesets, next, trs) {
-		if (offset--)
-			continue;
-		purge_rules(rs);
-		destroy_ruleset(rs);
-		SLIST_REMOVE(&rulesets, rs, ruleset, next);
+uint64_t
+proc_selfbox(box_rules_t *br, struct selfbox_args const *sba)
+{
+	struct box_ruleset **brs;
+	struct box_rule *r;
+
+	brs = (struct box_ruleset**)br;
+	if (*brs == NULL) {
+		if ((*brs = create_box_ruleset()) == NULL) {
+			xac_printf(0, "allocation of box_ruleset failed\n");
+			return (-1);
+		}
 	}
 
+	r = create_box_rule(sba->file_rule.i_num,
+						sba->file_rule.st_dev,
+						sba->file_rule.access,
+						sba->file_rule.allow,
+						sba->file_rule.log);
+
+	struct box_rules_hashhead *rh =
+		&(*brs)->rules_htbl[box_rule_hash(r) & (*brs)->rules_hmask];
+	SLIST_INSERT_HEAD(rh, r, next);
+	// XXX what if this overflows?
+	ruleset_gen++;
+
+	return (0);
+}
+
+int
+proc_selfbox_enter(box_rules_t *br)
+{
+	struct box_ruleset **brs;
+
+	brs = (struct box_ruleset**)br;
+	if (*brs == NULL) {
+		xac_printf(1, "enter attempted on non existing selfbox\n");
+		return (EINVAL);
+	}
+
+	(*brs)->active = 1;
+	return (0);
+}
+
+int
+verify_admin_sp(acid_t sid)
+{
+	if (sid == admin_subid)
+		return (0);
+
+	return (EPERM);
+}
+
+int
+lookup_box_rule(box_rules_t br, uint32_t oid,
+					struct verdict *verdict)
+{
+	struct box_ruleset *brs;
+	struct box_rule *brp;
+	struct box_rules_hashhead *rh;
+
+	brs = (struct box_ruleset*)br;
+	if (brs == NULL || brs->active == 0)
+		return (ENOENT);
+
+	uint32_t ind = object_hash(&objects[oid].op) & brs->rules_hmask;
+	rh = &brs->rules_htbl[ind];
+	SLIST_FOREACH(brp, rh, next) {
+		if (brp->objid == oid) {
+			*verdict = brp->v;
+			return (0);
+		}
+	}
+
+	return (EPERM);
 }
 
 int
@@ -1340,6 +1609,12 @@ load_rulesets(void)
 	if (rulesets_status == READY)
 		xac_printf(1, "Reloading rulesets.\n");
 
+	if (subjects_htbl == NULL)
+		subjects_htbl = hashinit(SUBJECTS_HASHTABLE_SIZE, M_XAC,
+								&subjects_hmask);
+	if (objects_htbl == NULL)
+		objects_htbl = hashinit(OBJECTS_HASHTABLE_SIZE, M_XAC,
+								&objects_hmask);
 	/**
 	 * Find the number of currently loaded rulesets. After new
 	 * rulesets are loaded successfully, we destroy the first
@@ -1416,10 +1691,6 @@ init_config(void)
 	sx_init_flags(&rulesets_lock, "xac general rulesets lock",
 					SX_RECURSE);
 	SLIST_INIT(&rulesets);
-	subjects_htbl = hashinit(SUBJECTS_HASHTABLE_SIZE, M_XAC,
-							&subjects_hmask);
-	objects_htbl = hashinit(OBJECTS_HASHTABLE_SIZE, M_XAC,
-							&objects_hmask);
 	init_config_files_personalities();
 	subjects_cnt = 0;
 	objects_cnt = 0;
@@ -1427,6 +1698,8 @@ init_config(void)
 	objects_cap = 0;
 	subjects = NULL;
 	objects = NULL;
+	subjects_htbl = NULL;
+	objects_htbl = NULL;
 }
 
 void
