@@ -31,30 +31,19 @@ XAC has two properties that make it effective for enforcing access control on pr
 The second property entails that only an entity that has knowledge of the pin code can tamper with the XAC module operations. The pin is required for changing/reloading the ruleset, disabling the kernel module, etc.
 
 # Internals
-
-- Sometimes uses PRIV_  privileges.
-
-- Sometime its own access control checks.
-
+TODO
 ## Architecture
-
-Self defense
-
-Loaded very early in the boot process
-
-Later can use file labels
-
-### kernel modules
+TODO
+### Sub-Modules
 1. xac_mac
 2. xac_config_manager
 3. xac_log
 
 ### System Calls
-
 XAC defined two sets of system calls. One for management, configuration, and probing of the XAC module itself, and another set of system calls for configuration of a sandboxing environment for a process.
 
 | __Syscall name__ | __Category__ | __Authorized processes__ | __Available in Sandboxing mode?__ |
-
+| ---------------- | ------------ | ------------------------ | --------------------------------- |
 | MAC_XAC_SYSCALL_RELOAD | `Management` | xactl | No |
 | MAC_XAC_SYSCALL_ENABLE |  `Management` | xactl | No |
 | MAC_XAC_SYSCALL_DISABLE |  `Management` | xactl | No |
