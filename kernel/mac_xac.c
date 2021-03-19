@@ -67,6 +67,9 @@ static int mac_xac_slot = 1;
 uma_zone_t xac_vnode_label_zone;
 uma_zone_t xac_proc_label_zone;
 
+/**
+ * Convert XAC access mode flags to accmod_t flags.
+ */
 uint64_t to_accessmode[XAC_ACCESS_MAX] = {
 	VREAD, VWRITE, VEXEC
 };
@@ -95,6 +98,16 @@ static SYSCTL_NODE(_security_mac, OID_AUTO, xac, CTLFLAG_RW, 0,
 SYSCTL_INT(_security_mac_xac, OID_AUTO, status, CTLFLAG_RD,
     &xac_status, 0, "mac_xac policy status");
 
+/**
+ * Generate access log for XAC. This is called when subject `sp` tries
+ * to access object `op` and the resulting matching rule has the log
+ * flag set. `v` is the verdict dictated by the matching rule. `t` is
+ * the access type that was requested.
+ *
+ * Note: currently we are simply using the kernel logging facility.
+ * eventually we will replace this with xac_log module which provides a
+ * dedicated logging interface for XAC.
+ */
 static void
 xac_log(char const *source, subject_personality_t *sp,
 		object_personality_t *op, struct verdict *v, int t)
@@ -160,6 +173,15 @@ proc_get_label(struct proc *p)
 	return (l);
 }
 
+/**
+ * Returns a pointer to the box_rules_t for process `p` which contains
+ * the selfboxing ruleset for that process. The return value may dereference
+ * to a NULL value which indicates that no selfboxing rules have been
+ * declared for this process, and thus it is not selfboxed.
+ *
+ * It may return NULL if the process label is missing: possible if the
+ * module is not loaded "lately".
+ */
 static
 box_rules_t*
 get_box_rules(struct proc *p)
@@ -174,6 +196,9 @@ get_box_rules(struct proc *p)
 	return br;
 }
 
+/**
+ * Returns 1 if process `p` is in selfboxed mode, 0 otherwise.
+ */
 static int
 is_selfboxed(struct proc *p)
 {
@@ -235,6 +260,10 @@ failed:
 	return (error);
 }
 
+/**
+ * Make sure that the XAC label for vnode `vp` reflects the contents
+ * of the on-disk file it is associated with.
+ */
 static int
 update_xac_label(subject_personality_t *sp, struct vnode *vp,
 					struct ucred *cred)
@@ -242,6 +271,13 @@ update_xac_label(subject_personality_t *sp, struct vnode *vp,
 	return vnode_sha512(vp, cred, sp->bytes);
 }
 
+/**
+ * Checks the generation number of the data stored in label `l` against the
+ * current rulesets. If the data seems to be stale, it invalidates
+ * the data, causing it to be reloaded on next access.
+ * This mechanism is used to ensure that subject/object labels always refer
+ * to the latest version of the ruleset.
+ */
 static void
 verify_generation(xac_vnode_label_t *l)
 {
@@ -269,9 +305,10 @@ vnode_get_label(struct vnode *vp)
 	return (l);
 }
 
-typedef xac_vnode_label_t *(*resolve_label)(struct vnode *vp,
-										struct ucred *cred);
-
+/**
+ * Get the current subject vnode xac label. If the label is NULL then create
+ * a new label and fill it with current ruleset data for the subject.
+ */
 static xac_vnode_label_t *
 resolve_subject_label(struct vnode *vp, struct ucred *cred)
 {
@@ -298,6 +335,10 @@ resolve_subject_label(struct vnode *vp, struct ucred *cred)
 	return (sl);
 }
 
+/**
+ * Get the current object vnode xac label. If the label is NULL then create
+ * a new label and fill it with current ruleset info for the object.
+ */
 static xac_vnode_label_t *
 resolve_object_label(struct vnode *vp, struct ucred *cred)
 {
@@ -329,11 +370,17 @@ resolve_object_label(struct vnode *vp, struct ucred *cred)
 	return (ol);
 }
 
+typedef xac_vnode_label_t *(*resolve_label)(struct vnode *vp,
+										struct ucred *cred);
+
 resolve_label label_resolvers[XAC_TYPE_MAX] = {
 	resolve_subject_label,
 	resolve_object_label
 };
 
+/**
+ * Find the subject/object ID that the label of vnode `vp` points to
+ */
 static acid_t
 get_id(enum ItemType type, struct vnode *vp, struct ucred *cred)
 {
@@ -346,6 +393,12 @@ get_id(enum ItemType type, struct vnode *vp, struct ucred *cred)
 	return l->ids[type];
 }
 
+/**
+ * Look up the appropriate selfbox rule that applys to access `accmode` of
+ * process `p` to object ID `o`, and return its verdict in `v`. If the verdict
+ * denies access, `access` will be set to the first access mode for which
+ * access was denied.
+ */
 static int
 do_verdict_selfbox(struct proc *p, acid_t o, accmode_t accmode, struct verdict *v,
 			int *access)
@@ -385,6 +438,12 @@ do_verdict_selfbox(struct proc *p, acid_t o, accmode_t accmode, struct verdict *
 	return (rc);
 }
 
+/**
+ * Look up the appropriate ambient rule that applys to access `accmode` of
+ * process `p` to object ID `o`, and return its verdict in `v`. If the verdict
+ * denies access, `access` will be set to the first access mode for which
+ * access was denied.
+ */
 static int
 do_verdict_ambient(acid_t s, acid_t o, accmode_t accmode, struct verdict *v,
 			int *access)
@@ -414,6 +473,10 @@ do_verdict_ambient(acid_t s, acid_t o, accmode_t accmode, struct verdict *v,
 	return (ENOENT);
 }
 
+/**
+ * This macro is the main entry point to access control check function of XAC. It
+ * captures the context of the caller for logging purposes.
+ */
 #define xac_impl(...) _xac_impl(__func__, ##__VA_ARGS__)
 
 inline static int
