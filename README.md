@@ -105,7 +105,7 @@ Also the kernel module will automatically load this binary ruleset at boot time 
 
 ### ptrace / ktrace
 
-Debugging is like modification and not allowed.
+Debugging can amount to modification of the executaion of a binary and thus is globally banned under XAC. Because, XAC access control depends on integrity of an executable and its hash digest.
 
 
 # Logging
