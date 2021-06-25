@@ -28,46 +28,40 @@
 
 #pragma once
 
-#include <sys/ptrace.h>
+#include <iostream>
 
-#define XAC_PATH_PREFIX "/etc/mac_xac"
-#define XAC_CONF_PATH (XAC_PATH_PREFIX "/ruleset-usr.bin")
-#define XAC_SYMTAB_PATH (XAC_PATH_PREFIX "/ruleset-usr.symtab")
+extern int current_log_level;
 
-enum mac_xac_object_type {
-	MAC_XAC_OBJECT_VNODE,
-	MAC_XAC_OBJECT_MOUNT,
-	MAC_XAC_OBJECT_PIPE,
-	MAC_XAC_OBJECT_SOCKET,
-	MAC_XAC_OBJECT_SHM,
-	MAC_XAC_OBJECT_SEM,
-	MAC_XAC_OBJECT_PROC,
-	MAC_XAC_OBJECT_THREAD,
-	MAC_XAC_OBJECT_SYSTEM,
-	MAC_XAC_OBJECT_DEBUG,
-	MAC_XAC_OBJECT_DEVFS,
-	MAC_XAC_OBJECT_BPFDESC,
-	MAC_XAC_OBJECT_PRIV,
-	MAC_XAC_OBJECT_KENV,
-	MAC_XAC_OBJECT_KLD,
-};
+#define HANDLE_EXCEPTION(name)        \
+	catch (name const &e)               \
+	{                                   \
+		xac_log(0, "ERROR: ", e.what());  \
+	}
 
-struct selfbox_args {
-	enum mac_xac_object_type type;
-	union {
-		struct {
-			uint64_t i_num;
-			uint64_t st_dev;
-			accmode_t access;
-			uint8_t allow;
-			uint8_t log;
-		} file_rule;
-	};
-};
-
-inline bool
-is_under_debugger()
+inline time_t
+get_epoch()
 {
-	return (ptrace(PT_TRACE_ME, 0, nullptr, 0) < 0);
+    time_t tm;
+    time(&tm);
+    return tm;
+}
+
+void
+inline xac_log_() { }
+
+template <typename H, typename... T>
+inline void
+xac_log_(H const& h, T const&... args)
+{
+    std::cerr << h;
+    xac_log_(args...);
+}
+
+template <typename... T>
+inline void
+xac_log(int level, T... args)
+{
+    if (level <= current_log_level)
+        xac_log_(get_epoch(), " ", args..., "\n");
 }
 

@@ -34,6 +34,8 @@
 #include "mac_xac.h"
 #include "xac_common.h"
 
+extern "C" {
+
 int
 xacsb_enter(void)
 {
@@ -87,3 +89,5 @@ xacsb_allow_fd(int fd, mode_t mode)
 	rc = mac_syscall("mac_xac", MAC_XAC_SYSCALL_SELFBOX_RULE, &arg);
 	return (rc);
 }
+
+} // extern "C"

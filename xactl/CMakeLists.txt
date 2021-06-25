@@ -26,9 +26,8 @@
 
 cmake_minimum_required(VERSION 3.5 FATAL_ERROR)
 
-project(xactl VERSION 0.0.1 LANGUAGES C CXX)
+project(xactl VERSION 0.0.1 LANGUAGES CXX)
 
-set(CMAKE_C_STANDARD 11)
 set(CMAKE_CXX_STANDARD 14)
 
 set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -fno-omit-frame-pointer -fsanitize=address -fsanitize=undefined -O0")
@@ -40,6 +39,7 @@ include_directories(include
 
 add_executable(${PROJECT_NAME}
                 xactl.cpp
+                xac_common.cpp
                 pin.cpp
                 terminal.cpp
                 xac_parser.cpp
@@ -49,7 +49,7 @@ add_executable(${PROJECT_NAME}
                 args_parser.cpp
 )
 
-set(LIBXAC_SOURCES xac_lib.c xac_lib.h)
+set(LIBXAC_SOURCES xac_lib.cpp xac_lib.h)
 
 add_library(xac STATIC ${LIBXAC_SOURCES})
 add_library(xac_static SHARED ${LIBXAC_SOURCES})

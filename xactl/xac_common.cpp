@@ -26,48 +26,5 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#pragma once
-
-#include <sys/ptrace.h>
-
-#define XAC_PATH_PREFIX "/etc/mac_xac"
-#define XAC_CONF_PATH (XAC_PATH_PREFIX "/ruleset-usr.bin")
-#define XAC_SYMTAB_PATH (XAC_PATH_PREFIX "/ruleset-usr.symtab")
-
-enum mac_xac_object_type {
-	MAC_XAC_OBJECT_VNODE,
-	MAC_XAC_OBJECT_MOUNT,
-	MAC_XAC_OBJECT_PIPE,
-	MAC_XAC_OBJECT_SOCKET,
-	MAC_XAC_OBJECT_SHM,
-	MAC_XAC_OBJECT_SEM,
-	MAC_XAC_OBJECT_PROC,
-	MAC_XAC_OBJECT_THREAD,
-	MAC_XAC_OBJECT_SYSTEM,
-	MAC_XAC_OBJECT_DEBUG,
-	MAC_XAC_OBJECT_DEVFS,
-	MAC_XAC_OBJECT_BPFDESC,
-	MAC_XAC_OBJECT_PRIV,
-	MAC_XAC_OBJECT_KENV,
-	MAC_XAC_OBJECT_KLD,
-};
-
-struct selfbox_args {
-	enum mac_xac_object_type type;
-	union {
-		struct {
-			uint64_t i_num;
-			uint64_t st_dev;
-			accmode_t access;
-			uint8_t allow;
-			uint8_t log;
-		} file_rule;
-	};
-};
-
-inline bool
-is_under_debugger()
-{
-	return (ptrace(PT_TRACE_ME, 0, nullptr, 0) < 0);
-}
+int current_log_level;
 
