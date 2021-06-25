@@ -255,7 +255,11 @@ vnode_sha512(struct vnode *vp, struct ucred *cred, uint8_t result[64])
 	SHA512_Final(result, &ctx);
 
 failed:
+#if __FreeBSD__ < 13
 	VOP_UNLOCK(vp, 0);
+#else
+	VOP_UNLOCK(vp);
+#endif
 	free(tmpbuf, M_TEMP);	
 	return (error);
 }

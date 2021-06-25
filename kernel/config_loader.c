@@ -31,6 +31,7 @@
 #include <sys/module.h>
 #include <sys/param.h>
 #include <sys/conf.h>
+#include <sys/eventhandler.h>
 #include <sys/kernel.h>
 #include <sys/proc.h>
 #include <sys/vnode.h>
@@ -994,7 +995,11 @@ load_ruleset_blob(char const *path, struct blob *rb,
 	rb->len = file_size;
 
 failed:
+#if __FreeBSD__ < 13
 	VOP_UNLOCK(nid.ni_vp, 0);
+#else
+	VOP_UNLOCK(nid.ni_vp);
+#endif
 	(void)vn_close(nid.ni_vp, FREAD, curthread->td_ucred, curthread);
 
 failed_noclose:
