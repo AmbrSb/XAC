@@ -49,13 +49,17 @@ add_executable(${PROJECT_NAME}
                 args_parser.cpp
 )
 
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+  XAC_PIN_PATH="/etc/mac_xac/pin"
+)
+
 set(LIBXAC_SOURCES xac_lib.cpp xac_lib.h)
 
 add_library(xac STATIC ${LIBXAC_SOURCES})
 add_library(xac_static SHARED ${LIBXAC_SOURCES})
 
 target_compile_definitions(
-	${PROJECT_NAME}
+  ${PROJECT_NAME}
 	PUBLIC "$<$<CONFIG:DEBUG>:DEBUG>")
 
 target_link_libraries(${PROJECT_NAME} PRIVATE

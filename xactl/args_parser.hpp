@@ -58,7 +58,7 @@ using options_short_spec_t = std::vector<
 										auth_func_t,
 										func_t>>;
 
-class options_error: public std::exception {
+class options_error final: public std::exception {
 public:
     options_error(std::string msg)
         : msg{msg}
@@ -76,9 +76,6 @@ void
 args_parser(int argc, char *argv[],
 				options_spec_t &switch_opts,
 				incompatible_options_t &options_incompatible);
-
-incompatible_options_t
-create_illegal_combs(incompatible_options_t options_incompatible);
 
 options_spec_t
 create_options_spec(options_short_spec_t options_incompatible);

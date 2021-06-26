@@ -69,11 +69,13 @@ int main(int argc, char *argv[]) try
 	/**
 	 * Array of incompatible switches a.k.a cannot be set in one invocation.
 	 */
-	 auto options_incompatible = create_illegal_combs(
+  incompatible_options_t options_incompatible =
+  {
 		 {
 			 {'c', 'p'},
 			 {'e', 'd'}
-		 });
+		 }
+  };
 
 	args_parser(argc, argv, switch_opts, options_incompatible);
 

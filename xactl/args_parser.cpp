@@ -36,17 +36,9 @@
 #include <getopt.h>
 
 #include "xac_log.hpp"
-
-
-using namespace std::literals;
-
 #include "args_parser.hpp"
 
-incompatible_options_t
-create_illegal_combs(incompatible_options_t options_incompatible)
-{
-	return options_incompatible;
-}
+using namespace std::literals;
 
 options_spec_t
 create_options_spec(options_short_spec_t short_switch_specs)

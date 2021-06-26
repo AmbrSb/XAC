@@ -31,10 +31,8 @@
 #include <string>
 #include "crypto_utils.hpp"
 
-
 using namespace std::literals;
 using std::string;
-
 
 class pin_error: public std::exception {
 public:
@@ -57,16 +55,17 @@ namespace _pin_internal {
  * fixed so that we can apply a self-defense policy
  * on it
  */
-string const kPinPath = "/etc/mac_xac/pin"s;
+string const kPinPath = XAC_PIN_PATH;
 int constexpr kMaxPinSize = 32;
 int constexpr kMinPinSize = 1;
 /** PIN digest is stored as a hex string */
 int constexpr kMaxPinStoreSize = DIGEST_LENGTH * 2;
 
 class pin final {
+    friend pin& get_pin();
+
 public:
-    pin() {}
-    ~pin() {}
+    pin() = default;
 
     pin(pin const &p) = delete;
     pin(pin &&p) = delete;
@@ -83,6 +82,8 @@ private:
     string retrieve();
     void save(string pin);
     bool status = kNotAuthenticated;
+
+    ~pin() = default;
 };
 
 inline pin&
@@ -92,7 +93,7 @@ get_pin()
     return pin;
 }
 
-}
+} // namespace _pin_internal 
 
 inline void pin_auth() {
     _pin_internal::get_pin().auth();

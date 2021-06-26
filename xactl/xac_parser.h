@@ -77,5 +77,5 @@ public:
 	}
 };
 
-void ruleset_configure(std::string path);
-void ruleset_configure_nc(std::string path);
+extern void ruleset_configure(std::string path);
+extern void ruleset_configure_nc(std::string path);

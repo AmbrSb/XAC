@@ -139,4 +139,5 @@ pin::auth()
 	auth_noset();
 }
 
-}
+} // namespace _pin_internal 
+

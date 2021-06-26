@@ -61,11 +61,11 @@ enum Type: uint32_t {
 };
 
 enum Flags: uint32_t {
-	READ 		= 0x01,
-	WRITE 		= 0x02,
-	EXECUTE 	= 0x04,
-	ALLOW 		= 0x08,
-	LOG 		= 0x10
+	READ      = 0x01,
+	WRITE     = 0x02,
+	EXECUTE   = 0x04,
+	ALLOW     = 0x08,
+	LOG       = 0x10
 };
 
 struct token {
@@ -107,6 +107,36 @@ string token::names [] = {
 	"TAB",
 	"NEW_LINE",
 	"EOF"
+};
+
+char    SPACE_CTOK = ' ';
+char    NEWLN_CTOK = '\n';
+char      TAB_CTOK = '\t';
+char ASTERISK_CTOK = '*';
+char  EXCLAIM_CTOK = '!';
+char    SLASH_CTOK = '/';
+char     READ_CTOK = 'R';
+char    WRITE_CTOK = 'W';
+char  EXECUTE_CTOK = 'X';
+char      LOG_CTOK = 'L';
+char    ALLOW_CTOK = '+';
+char     DENY_CTOK = '-';
+
+char const*     READ_RTOK = "R";
+char const*    WRITE_RTOK = "W";
+char const*  EXECUTE_RTOK = "X";
+char const*      LOG_RTOK = "[L]";
+char const*    ALLOW_RTOK = "+";
+char const*     DENY_RTOK = "-";
+char const* ASTERISK_RTOK = "*";
+
+char const* MSG_LOADING_RULESET = "loading XAC ruleset from ";
+char const* MSG_RULESET_UPDATED = "ruleset binary updated.";
+char const* MSG_RULESET_NOT_PERSISTED = "warning: ruleset binary was not written to disk.";
+
+enum ParserOps {
+  ParseOnly = 0x00,
+  Persist   = 0x01
 };
 
 using TokenType = token::Type;
@@ -169,7 +199,7 @@ struct object_record {
 };
 
 bool operator<(xac_hmac const& left,
-					xac_hmac const &right) {
+					xac_hmac const &right) noexcept {
 	for (int i = 0; i < 64; i++) {
 		if (left.hmac[i] < right.hmac[i])
 			return true;
@@ -181,13 +211,13 @@ bool operator<(xac_hmac const& left,
 
 struct subject_compare {
 	bool operator()(subject const &left,
-				subject const &right) const {
+				subject const &right) const noexcept {
 		return left.hmac < right.hmac;
 	}
 };
 
 struct object_compare {
-	bool operator()(object const &left, object const &right) const {
+	bool operator()(object const &left, object const &right) const noexcept {
 		if (left.i_number < right.i_number)
 			return true;
 		else if (left.i_number > right.i_number)
@@ -257,62 +287,63 @@ std::ostream&
 operator<<(std::ostream &os, verdict const &v)
 {
 	if (v.flags & ALLOW)
-		os << "+";
+		os << ALLOW_RTOK;
 	else
-		os << "-";
+		os << DENY_RTOK;
 	if (v.flags & READ)
-		os << "R";
+		os << READ_RTOK;
 	if (v.flags & WRITE)
-		os << "W";
+		os << WRITE_RTOK;
 	if (v.flags & EXECUTE)
-		os << "X";
+		os << EXECUTE_RTOK;
 	if (v.flags & LOG)
-		os << " [L]";
+		os << LOG_RTOK;
 	return os;
 }
 
 std::ostream&
 operator<<(std::ostream &os, rule_set const& rs)
 {
-	auto tab = "  ";
+	auto const Indent = "  ";
+	auto const Space  = " ";
 
 	for (auto const &srec: rs.subject_records) {
-		os << TokenType::SUB_TOKEN << " ";
+		os << TokenType::SUB_TOKEN << Space;
 		if (srec.subid == 0) {
-			os << "* ";
+			os << ASTERISK_RTOK;
 		} else {
 			auto t = rs.subject_ids.find(srec.subid);
 			os << t->second << std::endl;
 		}
 		for (auto const &obj: srec.objs) {
-			os << tab;
-			os << obj.v << " ";
+			os << Indent;
+			os << obj.v << Space;
 			if (obj.objid == 0) {
-				os << "* ";
+				os << ASTERISK_RTOK;
 			} else {
 				auto o = rs.object_ids.find(obj.objid);
-				os << o->second << " ";
+				os << o->second << Space;
 			}
 			os << std::endl;
 		}
 	}
 
 	for (auto const &orec: rs.object_records) {
-		os << TokenType::OBJ_TOKEN << " ";
+		os << TokenType::OBJ_TOKEN << Space;
 		if (orec.objid == 0) {
-			os << "* ";
+			os << ASTERISK_RTOK;
 		} else {
 			auto t = rs.object_ids.find(orec.objid);
 			os << t->second << std::endl;
 		}
 		for (auto const &sub: orec.subs) {
-			os << tab;
-			os << sub.v << " ";
+			os << Indent;
+			os << sub.v << Space;
 			if (sub.subid == 0) {
-				os << "* ";
+				os << ASTERISK_RTOK;
 			} else {
 				auto o = rs.subject_ids.find(sub.subid);
-				os << o->second << " ";
+				os << o->second << Space;
 			}
 			os << std::endl;
 		}
@@ -320,9 +351,9 @@ operator<<(std::ostream &os, rule_set const& rs)
 	return os;
 }
 
-class ruleset_parser {
+class ruleset_parser final {
 public:
-	ruleset_parser(string const &path);
+	explicit ruleset_parser(string const &path);
 
 	shared_ptr<rule_set> get_ruleset();
 	string dump();
@@ -340,7 +371,7 @@ private:
 		" or " + token2str(TokenType::OBJ_TOKEN) + " speciifer"
 	};
 
-	shared_ptr<rule_set> rs;
+	shared_ptr<rule_set> rs_;
 
 	bool s_access(string s);
 	void skip_white_space(deque<token> &tokens);
@@ -385,23 +416,23 @@ private:
 };
 
 ruleset_parser::ruleset_parser(string const &config_path)
-	: rs{new rule_set{}}
+	: rs_{new rule_set{}}
 {
-	rs->admin_sp = create_subject("/usr/local/bin/xactl"s);
+	rs_->admin_sp = create_subject(XACTL_BIN_PATH);
 
 	deque<token> tokens = tokenize(config_path);
 	skip_white_space(tokens);
 	while (tokens.size() > 0) {
 		if (tokens.front().type == TokenType::SUB_TOKEN) {
-			auto srec = parse_subject_record(tokens, rs->subjects, rs->subject_ids,
-											rs->objects, rs->object_ids,
-											rs->subjects_symtab, rs->objects_symtab);
-			rs->subject_records.push_back(srec);
+			auto srec = parse_subject_record(tokens, rs_->subjects, rs_->subject_ids,
+											rs_->objects, rs_->object_ids,
+											rs_->subjects_symtab, rs_->objects_symtab);
+			rs_->subject_records.push_back(srec);
 		} else if (tokens.front().type == TokenType::OBJ_TOKEN) {
-			auto orec = parse_object_record(tokens, rs->subjects, rs->subject_ids,
-											rs->objects, rs->object_ids,
-											rs->subjects_symtab, rs->objects_symtab);
-			rs->object_records.push_back(orec);
+			auto orec = parse_object_record(tokens, rs_->subjects, rs_->subject_ids,
+											rs_->objects, rs_->object_ids,
+											rs_->subjects_symtab, rs_->objects_symtab);
+			rs_->object_records.push_back(orec);
 		} else if (tokens.front().type == TokenType::EOF_TOKEN) {
 			break;
 		} else {
@@ -415,7 +446,7 @@ ruleset_parser::ruleset_parser(string const &config_path)
 shared_ptr<rule_set>
 ruleset_parser::get_ruleset()
 {
-	return rs;
+	return rs_;
 }
 
 bool
@@ -449,19 +480,19 @@ ruleset_parser::next_token(std::ifstream &f)
 	string str;
 	char c;
 	token t;
-	static int32_t line = 1;
+	static int32_t line_no = 1;
 
 	f >> std::noskipws;
 	while (f >> c) {
-		if (c == ' ' || c == '\n' || c == '\t') {
+		if (c == SPACE_CTOK || c == NEWLN_CTOK || c == TAB_CTOK) {
 			if (str.size() > 0) {
-				if (str == "*") {
+				if (str == string{ASTERISK_CTOK}) {
 					t.type = TokenType::ASTERISK;
 					t.val = str;
-				} else if (str == "!") {
+				} else if (str == string{EXCLAIM_CTOK}) {
 					t.type = TokenType::INVERT;
 					t.val = str;
-				} else if (str[0] == '/') {
+				} else if (str[0] == SLASH_CTOK) {
 					t.type = TokenType::PATH;
 					t.val = str;
 				} else if (str.size() <= 3 && is_access(str)) {
@@ -483,18 +514,18 @@ ruleset_parser::next_token(std::ifstream &f)
 				f.putback(c);
 				break;
 			} else {
-				if (c == ' ') {
+				if (c == SPACE_CTOK) {
 					t.type = TokenType::WS;
 					t.val = c;
 					break;
 				}
-				if (c == '\n') {
+				if (c == NEWLN_CTOK) {
 					t.type = TokenType::NEW_LINE;
 					t.val = c;
-					line++;
+					line_no++;
 					break;
 				}
-				if (c == '\t') {
+				if (c == TAB_CTOK) {
 					t.type = TokenType::TAB;
 					t.val = c;
 					break;
@@ -507,7 +538,7 @@ ruleset_parser::next_token(std::ifstream &f)
 	}
 	if (f.eof())
 		t.type = TokenType::EOF_TOKEN;
-	t.line = line;
+	t.line = line_no;
 	return t;
 }
 
@@ -573,16 +604,16 @@ ruleset_parser::parse_access(deque<token> &tokens)
 
 	switch (access.size()) {
 	case 3:
-		if (access[2] == 'X')
+		if (access[2] == EXECUTE_CTOK)
 			x = ON;
 		else
 			throw config_error{token.line, ParseAccessErrorMessage};
 
 		/* FALLTHROUGH */
 	case 2:
-		if (access[1] == 'W')
+		if (access[1] == WRITE_CTOK)
 			w = ON;
-		else if (access[1] == 'X') {
+		else if (access[1] == EXECUTE_CTOK) {
 			if (x)
 				throw config_error{token.line, ParseAccessErrorMessage};
 			else
@@ -592,14 +623,14 @@ ruleset_parser::parse_access(deque<token> &tokens)
 
 		/* FALLTHROUGH */
 	case 1:
-		if (access[0] == 'R')
+		if (access[0] == READ_CTOK)
 			r = ON;
-		else if (access[0] == 'W') {
+		else if (access[0] == WRITE_CTOK) {
 			if (w)
 				throw config_error{token.line, ParseAccessErrorMessage};
 			else
 				w = ON;
-		} else if (access[0] == 'X') {
+		} else if (access[0] == EXECUTE_CTOK) {
 			if (x)
 				throw config_error{token.line, ParseAccessErrorMessage};
 			else
@@ -867,7 +898,7 @@ string
 ruleset_parser::dump()
 {
 	std::ostringstream os;
-	os << *rs;
+	os << *rs_;
 	return os.str();
 }
 
@@ -879,8 +910,8 @@ public:
 	shared_ptr<vector<uint8_t>> get_symtabbuf();
 	
 private:
-	shared_ptr<vector<uint8_t>> servec;
-	shared_ptr<vector<uint8_t>> symtab;
+	shared_ptr<vector<uint8_t>> servec_;
+	shared_ptr<vector<uint8_t>> symtab_;
 
 	void append_bytes(uint8_t const *bs, uint32_t len,
 						shared_ptr<vector<uint8_t>> blob);
@@ -903,8 +934,8 @@ private:
  * All data in output buffer are properly aligned.
  */
 ruleset_serializer::ruleset_serializer(shared_ptr<rule_set> rs)
-	: servec{new vector<uint8_t>},
-	symtab{new vector<uint8_t>}
+	: servec_{new vector<uint8_t>},
+	symtab_{new vector<uint8_t>}
 {
 	uint64_t rules_cnt = 0;
 	for (auto const &srec: rs->subject_records)
@@ -967,13 +998,13 @@ ruleset_serializer::ruleset_serializer(shared_ptr<rule_set> rs)
 shared_ptr<vector<uint8_t>>
 ruleset_serializer::get_serbuf()
 {
-	return servec;
+	return servec_;
 }
 
 shared_ptr<vector<uint8_t>>
 ruleset_serializer::get_symtabbuf()
 {
-	return symtab;
+	return symtab_;
 }
 
 void
@@ -1008,28 +1039,28 @@ template<typename T>
 void
 ruleset_serializer::append_rs(T d)
 {
-	append(d, servec);
+	append(d, servec_);
 }
 
 template<typename T, uint32_t N>
 void
 ruleset_serializer::append_rs(T (&arr)[N])
 {
-	append(arr, servec);
+	append(arr, servec_);
 }
 
 template<typename T>
 void
 ruleset_serializer::append_symtab(T d)
 {
-	append(d, symtab);
+	append(d, symtab_);
 }
 
 template<typename T, uint32_t N>
 void
 ruleset_serializer::append_symtab(T (&arr)[N])
 {
-	append(arr, symtab);
+	append(arr, symtab_);
 }
 
 } // anonymous namespace
@@ -1050,11 +1081,11 @@ compile_ruleset(string path, bool dump)
 }
 
 static void
-_ruleset_configure(std::string path, bool parse_only)
+_ruleset_configure(std::string path, ParserOps ops)
 {
-	xac_log(0, "loading XAC ruleset from ", path);
-	auto ruleset = compile_ruleset(path, false);
-	if (!parse_only) {
+	xac_log(0, MSG_LOADING_RULESET, path);
+	auto ruleset = compile_ruleset(path, true /* no dump */);
+	if (ops & ParserOps::Persist) {
 		std::ofstream bf{XAC_CONF_PATH};
 		std::ofstream bf_symtab{XAC_SYMTAB_PATH};
 		for (uint8_t const b: *std::get<0>(ruleset))
@@ -1065,20 +1096,20 @@ _ruleset_configure(std::string path, bool parse_only)
 		bf.close();
 	}
 
-	if (parse_only)
-		xac_log(0, "warning: ruleset binary was not written to disk.");
+	if (ops & ParserOps::Persist)
+		xac_log(0, MSG_RULESET_UPDATED);
 	else
-		xac_log(0, "ruleset binary updated.");
+		xac_log(0, MSG_RULESET_NOT_PERSISTED);
 }
 
 void
 ruleset_configure(std::string path)
 {
-	_ruleset_configure(path, false);
+	_ruleset_configure(path, ParserOps::Persist);
 }
 
 void
 ruleset_configure_nc(std::string path)
 {
-	_ruleset_configure(path, true);
+	_ruleset_configure(path, ParserOps::ParseOnly);
 }
