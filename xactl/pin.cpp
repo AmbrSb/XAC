@@ -35,6 +35,7 @@
 #include "fs_utils.hpp"
 #include "crypto_utils.hpp"
 #include "terminal.hpp"
+#include "xac_log.hpp"
 
 namespace _pin_internal {
 
@@ -81,13 +82,11 @@ retry:
 	std::cin >> pin;
 	std::cout << std::endl;
 	if (pin.size() > kMaxPinSize) {
-		std::cerr << "PIN must be at most " << kMaxPinSize << " characters"
-					<< std::endl;
+		xac_print("PIN must be at most ", kMaxPinSize, " characters\n");
 		goto retry;
 	}
 	if (pin.size() < kMinPinSize) {
-		std::cerr << "PIN must be at least " << kMinPinSize << " characters"
-					<< std::endl;
+		xac_print("PIN must be at least ", kMinPinSize, " characters\n");
 		goto retry;
 	}
 	return pin;
@@ -105,7 +104,7 @@ pin::reset()
 		throw pin_error{"Entered pins do not match."};
 	}
 	this->save(new_pin);
-	std::cout << "PIN reset successfully." << std::endl;
+	xac_log(0, "PIN reset successfully.");
 }
 
 void

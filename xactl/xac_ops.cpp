@@ -26,7 +26,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <iostream>
 #include <string>
 #include <exception>
 
@@ -34,6 +33,7 @@
 
 #include "mac_xac.h"
 #include "xac_ops.hpp"
+#include "xac_log.hpp"
 
 using namespace std::literals;
 
@@ -55,11 +55,10 @@ make_syscall(enum mac_xac_syscalls syscall_code, void *arg)
 
 	rc = mac_syscall(MAC_XAC_NAME, syscall_code, arg);
 	if (rc) {
-		std::cerr << "Request failed with error number: " << errno << ": "
-					<< std::endl;
-		perror("Error message: ");
+		xac_log(0, "Request failed with error number: ", errno, ": \n");
+		xac_log(0, strerror(errno));
 		if (errno == ENOSYS)
-			std::cerr << "Is mac_xac module loaded?" << std::endl;
+			xac_log(0, "Is mac_xac module loaded?\n");
 	}
 	
 	return (rc);

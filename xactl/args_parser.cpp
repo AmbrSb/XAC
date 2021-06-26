@@ -26,7 +26,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <iostream>
 #include <map>
 #include <vector>
 #include <exception>
@@ -34,8 +33,10 @@
 #include <functional>
 #include <string>
 #include <sstream>
-
 #include <getopt.h>
+
+#include "xac_log.hpp"
+
 
 using namespace std::literals;
 
@@ -129,19 +130,18 @@ args_parser(int argc, char *argv[],
 		case 0:
 			if (long_options[option_index].flag != 0)
 				break;
-			std::cerr << "option " << long_options[option_index].name;
+			xac_print("option ", long_options[option_index].name);
 			if (optarg)
-				std::cerr << " with arg " << optarg;
-			std::cerr << std::endl;
+				xac_print(" with arg ", optarg);
+			xac_print("\n");
 			break;
 
 		case ':':
-			std::cerr << "option needs a value" << std::endl;
+			xac_print("option needs a value\n");
 			break;
 
 		case '?':
-			std::cerr << "parsing of command line options failed."
-						<< std::endl;
+			xac_print("parsing of command line options failed.\n");
 			exit(1);
 			break;
 		}

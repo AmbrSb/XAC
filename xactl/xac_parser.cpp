@@ -27,7 +27,6 @@
  */
 
 #include <fstream>
-#include <iostream>
 #include <utility>
 #include <vector>
 #include <string>
@@ -35,6 +34,7 @@
 #include <deque>
 
 #include "xac_common.h"
+#include "xac_log.hpp"
 #include "xac_parser.h"
 #include "crypto_utils.hpp"
 #include "fs_utils.hpp"
@@ -1015,7 +1015,6 @@ template<typename T, uint32_t N>
 void
 ruleset_serializer::append_rs(T (&arr)[N])
 {
-	std::cerr << "hello" << std::endl;
 	append(arr, servec);
 }
 
@@ -1045,7 +1044,7 @@ compile_ruleset(string path, bool dump)
 	auto rp = ruleset_parser{path};
 	auto rs = rp.get_ruleset();
 	if (dump)
-		std::cout << rp.dump() << std::endl;
+		xac_print(rp.dump());
 	ruleset_serializer rss{rs};
 	return std::make_tuple(rss.get_serbuf(), rss.get_symtabbuf());
 }
@@ -1053,7 +1052,7 @@ compile_ruleset(string path, bool dump)
 static void
 _ruleset_configure(std::string path, bool parse_only)
 {
-	std::cout << "loading XAC ruleset from " << path << std::endl;
+	xac_log(0, "loading XAC ruleset from ", path);
 	auto ruleset = compile_ruleset(path, false);
 	if (!parse_only) {
 		std::ofstream bf{XAC_CONF_PATH};
@@ -1067,10 +1066,9 @@ _ruleset_configure(std::string path, bool parse_only)
 	}
 
 	if (parse_only)
-		std::cout << "warning: ruleset binary was not written to disk."
-					<< std::endl;
+		xac_log(0, "warning: ruleset binary was not written to disk.");
 	else
-		std::cout << "ruleset binary updated." << std::endl;
+		xac_log(0, "ruleset binary updated.");
 }
 
 void

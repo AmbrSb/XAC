@@ -34,7 +34,7 @@
 #include "args_parser.hpp"
 #include "pin.hpp"
 #include "xac_parser.h"
-#include "xac_log.h"
+#include "xac_log.hpp"
 
 
 int main(int argc, char *argv[]) try

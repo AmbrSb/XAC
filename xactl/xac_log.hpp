@@ -38,6 +38,12 @@ extern int current_log_level;
 		xac_log(0, "ERROR: ", e.what());  \
 	}
 
+enum OutMedium: uint32_t {
+    None    = 0x0000,
+    Console = 0x0001,
+    Log     = 0x0002
+};
+
 inline time_t
 get_epoch()
 {
@@ -47,14 +53,14 @@ get_epoch()
 }
 
 void
-inline xac_log_() { }
+inline xac_log_(int) { }
 
 template <typename H, typename... T>
 inline void
-xac_log_(H const& h, T const&... args)
+xac_log_(int om /* OutMedium flags */, H const& h, T const&... args)
 {
     std::cerr << h;
-    xac_log_(args...);
+    xac_log_(om, args...);
 }
 
 template <typename... T>
@@ -62,6 +68,14 @@ inline void
 xac_log(int level, T... args)
 {
     if (level <= current_log_level)
-        xac_log_(get_epoch(), " ", args..., "\n");
+        xac_log_(OutMedium::Log | OutMedium::Console,
+                 get_epoch(), " ", args..., "\n");
+}
+
+template <typename... T>
+inline void
+xac_print(T... args)
+{
+    xac_log_(OutMedium::Console, args...);
 }
 
