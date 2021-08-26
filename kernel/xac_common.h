@@ -45,7 +45,7 @@ typedef uint32_t flag_t;
 #define ACTIVE_SID(s) (s != ACID_INVAL)
 #define ACTIVE_OID(o) (o != ACID_INVAL)
 
-#define xac_printf(level, fmt, ...)                              \
+#define xac_printf(level, fmt, ...)                               \
     do                                                            \
     {                                                             \
         if (level <= current_log_level)                           \
@@ -63,6 +63,7 @@ typedef uint32_t flag_t;
 
 extern int current_log_level;
 
+// XXX add static verification these are in sync with xac_common of userspace
 enum mac_xac_object_type {
 	MAC_XAC_OBJECT_VNODE,
 	MAC_XAC_OBJECT_MOUNT,

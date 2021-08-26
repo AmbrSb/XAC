@@ -88,14 +88,14 @@ char const *perm_str[] = {
 };
 
 #define inc_ref(x)      \
-	do                  \
-	{                   \
-		(x->ref_cnt)++; \
+	do                    \
+	{                     \
+		(x->ref_cnt)++;     \
 	} while (0);
 
-#define dec_ref(x)          \
-	do                      \
-	{                       \
+#define dec_ref(x)      \
+	do                    \
+	{                     \
 		(x->ref_cnt)--;     \
 	} while (0);
 
@@ -221,22 +221,22 @@ static acid_t add_or_ref_object(object_personality_t *op);
 
 #define SUPPRESS_UNUSED_WARNING(f) (void)f
 
-#define val_to_printf(v)               \
-	_Generic((v),                      \
-			 subject_personality_t     \
+#define val_to_printf(v)       \
+	_Generic((v),                \
+			 subject_personality_t   \
 			 	: (*((int32_t *)&v)),  \
-			 object_personality_t      \
+			 object_personality_t    \
 				: (*((int32_t *)&v)),  \
-			 default                   \
+			 default                 \
 				: v)
 
-#define ptr_to_printf(p)               \
-	_Generic((p),                      \
-			 subject_personality_t *   \
+#define ptr_to_printf(p)       \
+	_Generic((p),                \
+			 subject_personality_t * \
 				: (*((int32_t *)p)),   \
-			 object_personality_t *    \
+			 object_personality_t *  \
 				: (*((int32_t *)p)),   \
-			default                    \
+			default                  \
 				: *p)
 
 /**
@@ -244,20 +244,20 @@ static acid_t add_or_ref_object(object_personality_t *op);
  * It performs proper bounds checking to ensure blob is not accessed past
  * its end.
  */
-#define DEFINE_DESERILIZER_FUNC_V(T)                                     \
-	inline static int __attribute__((unused))                            \
+#define DEFINE_DESERILIZER_FUNC_V(T)                                 \
+	inline static int __attribute__((unused))                          \
 		read_val_##T(struct blob *b, T *out, char const *msg)            \
-	{                                                                    \
+	{                                                                  \
 		SUPPRESS_UNUSED_WARNING(read_val_##T);                           \
 		T v;                                                             \
 		if (b->b + b->len < b->cur + sizeof(T))                          \
 		{                                                                \
-			xac_printf(0, "reading past end of blob!\n");                \
-			return (EINVAL);                                             \
+			xac_printf(0, "reading past end of blob!\n");                  \
+			return (EINVAL);                                               \
 		}                                                                \
 		memcpy(&v, b->cur, sizeof(T));                                   \
 		if (msg)                                                         \
-			xac_printf(7, "%s: %u\n", msg, (uint32_t)val_to_printf(v));  \
+			xac_printf(7, "%s: %u\n", msg, (uint32_t)val_to_printf(v));    \
 		(b->cur) += sizeof(T);                                           \
 		*out = v;                                                        \
 		return (0);                                                      \
@@ -268,20 +268,20 @@ static acid_t add_or_ref_object(object_personality_t *op);
  * It performs proper bounds checking to ensure blob is not accessed past
  * its end.
  */
-#define DEFINE_DESERILIZER_FUNC_P(T)                                         \
-	inline static int __attribute__((unused))                                \
+#define DEFINE_DESERILIZER_FUNC_P(T)                                     \
+	inline static int __attribute__((unused))                              \
 		read_ptr_##T(struct blob *b, T **out, char const *msg)               \
-	{                                                                        \
+	{                                                                      \
 		SUPPRESS_UNUSED_WARNING(read_ptr_##T);                               \
 		T *dptr;                                                             \
 		if (b->b + b->len < b->cur + sizeof(T))                              \
 		{                                                                    \
-			xac_printf(0, "reading past end of blob!\n");                    \
-			return (EINVAL);                                                 \
+			xac_printf(0, "reading past end of blob!\n");                      \
+			return (EINVAL);                                                   \
 		}                                                                    \
 		dptr = (T *)b->cur;                                                  \
 		if (msg)                                                             \
-			xac_printf(7, "%s: %u\n", msg, (u_int32_t)ptr_to_printf(dptr));  \
+			xac_printf(7, "%s: %u\n", msg, (u_int32_t)ptr_to_printf(dptr));    \
 		(b->cur) += sizeof(T);                                               \
 		*out = dptr;                                                         \
 		return (0);                                                          \
@@ -1139,44 +1139,44 @@ add_or_ref_object(object_personality_t *op)
 static int
 deserialize_ruleset_blob(struct blob *rsb, struct ruleset **rsp)
 {
-#define VERIFY_SUBID(i)                                            \
-	if (i > subjects_cnt || i < 0)                                 \
-	{                                                              \
-		xac_printf(0, "Invalid subject id (%u).\n", (uint32_t)i); \
-		rc = (EINVAL);                                             \
-		goto out;                                                  \
+#define VERIFY_SUBID(i)                                         \
+	if (i > subjects_cnt || i < 0)                                \
+	{                                                             \
+		xac_printf(0, "Invalid subject id (%u).\n", (uint32_t)i);   \
+		rc = (EINVAL);                                              \
+		goto out;                                                   \
 	}
 
-#define VERIFY_OBJID(i)                                           \
+#define VERIFY_OBJID(i)                                         \
 	if (i > objects_cnt || i < 0)                                 \
 	{                                                             \
-		xac_printf(0, "Invalid object id (%u).\n", (uint32_t)i); \
-		rc = (EINVAL);                                            \
-		goto out;                                                 \
+		xac_printf(0, "Invalid object id (%u).\n", (uint32_t)i);    \
+		rc = (EINVAL);                                              \
+		goto out;                                                   \
 	}
 
-#define VERIFY_OP(op)                                              \
-	if (op->i_number == 0)                                         \
-	{                                                              \
-		xac_printf(0, "Invalid inode number: %lu", op->i_number); \
-		rc = EINVAL;                                               \
-		goto out;                                                  \
+#define VERIFY_OP(op)                                           \
+	if (op->i_number == 0)                                        \
+	{                                                             \
+		xac_printf(0, "Invalid inode number: %lu", op->i_number);   \
+		rc = EINVAL;                                                \
+		goto out;                                                   \
 	}
 
-#define VERIFY_SUB_CNT(c, m)            \
+#define VERIFY_SUB_CNT(c, m)          \
 	if (c > MAX_SUBJECTS_CNT)           \
 	{                                   \
-		xac_printf(0, m ": %u.\n", c); \
-		rc = ENOMEM;                    \
-		goto out;                       \
+		xac_printf(0, m ": %u.\n", c);    \
+		rc = ENOMEM;                      \
+		goto out;                         \
 	}
 
-#define VERIFY_OBJ_CNT(c, m)            \
+#define VERIFY_OBJ_CNT(c, m)          \
 	if (c > MAX_OBJECTS_CNT)            \
 	{                                   \
-		xac_printf(0, m ": %u.\n", c);  \
-		rc = ENOMEM;                    \
-		goto out;                       \
+		xac_printf(0, m ": %u.\n", c);    \
+		rc = ENOMEM;                      \
+		goto out;                         \
 	}
 
 	struct ruleset *rs = NULL;
