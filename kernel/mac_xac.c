@@ -306,6 +306,8 @@ vnode_get_label(struct vnode *vp)
 		l = uma_zalloc(xac_vnode_label_zone, 0);
 		SLOT_SET(vp->v_label, l);
 	}
+
+	verify_generation(l);
 	return (l);
 }
 
@@ -322,7 +324,6 @@ resolve_subject_label(struct vnode *vp, struct ucred *cred)
 	int rc;
 
 	sl = vnode_get_label(vp);
-	verify_generation(sl);
 
 	if (sl->l_subject_id == 0) {
 		rc = update_xac_label(&sp, vp, cred);
@@ -353,7 +354,6 @@ resolve_object_label(struct vnode *vp, struct ucred *cred)
 	int rc;
 
 	ol = vnode_get_label(vp);
-	verify_generation(ol);
 
 	if (ol->l_object_id == 0) {
 		rc = VOP_GETATTR(vp, &va, cred);
