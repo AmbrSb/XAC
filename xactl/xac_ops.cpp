@@ -29,6 +29,7 @@
 #include <string>
 #include <exception>
 
+#include <unistd.h>
 #include <sys/mac.h>
 
 #include "mac_xac.h"
