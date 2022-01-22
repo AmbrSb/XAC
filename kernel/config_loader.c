@@ -49,15 +49,15 @@
 #define OBJECTS_HASHTABLE_SIZE	(512)
 #define BOXRULES_HASHTABLE_SIZE (256)
 
-#define MAX_RULESETS 3
+#define MAX_RULESETS 16
 #define MAX_SUBJECTS_CNT (10000  * MAX_RULESETS)
 #define MAX_OBJECTS_CNT  (10000  * MAX_RULESETS)
 #define MAX_RULES_CNT 	 (200000 * MAX_RULESETS)
 #define NUM_RULSETS_INVALID (UINT32_MAX)
 
-#define RULESET_PATH "/etc/mac_xac/"
+#define RULESET_PATH "/etc/mac_xac/rules.d/"
 static const char *config_files[] = {
-	// "ruleset-sd.bin",
+	"ruleset-sd.bin",
 	"ruleset-usr.bin"
 };
 static object_personality_t *config_files_personalities[sizeof(config_files)];
