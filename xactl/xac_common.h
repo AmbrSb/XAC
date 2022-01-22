@@ -33,7 +33,7 @@
 #define XAC_PATH_PREFIX "/etc/mac_xac"
 #define XAC_CONF_PATH (XAC_PATH_PREFIX "/ruleset-usr.bin")
 #define XAC_SYMTAB_PATH (XAC_PATH_PREFIX "/ruleset-usr.symtab")
-#define XACTL_BIN_PATH ("/usr/local/bin/xactl")
+#define XACTL_BIN_PATH ("/usr/local/sbin/xactl")
 
 enum mac_xac_object_type {
 	MAC_XAC_OBJECT_VNODE,

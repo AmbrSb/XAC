@@ -78,4 +78,4 @@ target_link_libraries(${PROJECT_NAME}_sbtest_c_01 xac)
 add_test(NAME ${PROJECT_NAME}_sbtest_01
 		 COMMAND ${PROJECT_NAME}_sbtest_p_01)
  
-install(TARGETS ${PROJECT_NAME} DESTINATION bin)
+install(TARGETS ${PROJECT_NAME} DESTINATION sbin)
