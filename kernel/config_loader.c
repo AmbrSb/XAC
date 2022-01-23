@@ -1605,8 +1605,10 @@ load_rulesets(void)
 
 
 	num_rulesets_to_load = sizeof(config_files) / sizeof(config_files[0]);
+
+	WLOCK_RULESETS;
 	/**
-	 * Read ruleset binaries before exclusively locking the rulesets.
+	 * Read ruleset binaries.
 	 */
 	for (i = 0; i < num_rulesets_to_load; i++) {
 		xac_printf(9, "going to load rulset blob (%s)\n", config_files[i]);
@@ -1623,7 +1625,6 @@ load_rulesets(void)
 		xac_printf(9, "rulset blob loaded\n");
 	}
 
-	WLOCK_RULESETS;
 	if (rulesets_status == READY)
 		xac_printf(1, "Reloading rulesets.\n");
 
