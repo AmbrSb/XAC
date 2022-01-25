@@ -28,49 +28,27 @@
 
 #pragma once
 
-#include <sys/ptrace.h>
+#include <sys/vnode.h>
+#include <sys/dirent.h>
 
-#define CTRLR_NAME "xactl"
-#define MOD_NAME "mac_xac"
-#define XAC_PATH_PREFIX "/etc/" MOD_NAME
-#define XAC_CONF_PATH (XAC_PATH_PREFIX "/rules.d")
-#define XAC_BIN_PATH (XAC_PATH_PREFIX "/rules.bin")
-#define XACTL_BIN_PATH ("/usr/local/sbin/" CTRLR_NAME)
 
-enum mac_xac_object_type {
-	MAC_XAC_OBJECT_VNODE,
-	MAC_XAC_OBJECT_MOUNT,
-	MAC_XAC_OBJECT_PIPE,
-	MAC_XAC_OBJECT_SOCKET,
-	MAC_XAC_OBJECT_SHM,
-	MAC_XAC_OBJECT_SEM,
-	MAC_XAC_OBJECT_PROC,
-	MAC_XAC_OBJECT_THREAD,
-	MAC_XAC_OBJECT_SYSTEM,
-	MAC_XAC_OBJECT_DEBUG,
-	MAC_XAC_OBJECT_DEVFS,
-	MAC_XAC_OBJECT_BPFDESC,
-	MAC_XAC_OBJECT_PRIV,
-	MAC_XAC_OBJECT_KENV,
-	MAC_XAC_OBJECT_KLD,
-};
-
-struct selfbox_args {
-	enum mac_xac_object_type type;
-	union {
-		struct {
-			uint64_t i_num;
-			uint64_t st_dev;
-			accmode_t access;
-			uint8_t allow;
-			uint8_t log;
-		} file_rule;
-	};
-};
-
-inline bool
-is_under_debugger()
+/**
+ * Represents a binary buffer used to hold rulesets binary files
+ */
+struct blob
 {
-	return (ptrace(PT_TRACE_ME, 0, nullptr, 0) < 0);
-}
+	uint8_t *b;
+	uint8_t *cur;
+	uint64_t len;
+};
+
+void
+destroy_blob(struct blob *b);
+
+int
+load_file(char const *path, struct blob *rb,
+          object_personality_t **rs_personality);
+
+int dir_files(char const * path, char *filenames[],
+              int *filescnt, int max_ruleset);
 

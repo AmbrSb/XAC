@@ -33,6 +33,8 @@
 #include <map>
 #include <deque>
 
+#include <libgen.h>
+
 #include "xac_common.h"
 #include "xac_log.hpp"
 #include "xac_parser.h"
@@ -1081,13 +1083,17 @@ compile_ruleset(string path, bool dump)
 }
 
 static void
-_ruleset_configure(std::string path, ParserOps ops)
+_ruleset_configure(std::string path, ParserOps ops,
+                   std::string bin_out = "",
+                   std::string sym_out = "")
 {
+    assert(bin_out.size() > 0 || !(ops && ParserOps::Persist));
+
 	xac_log(0, MSG_LOADING_RULESET, path);
-	auto ruleset = compile_ruleset(path, true /* no dump */);
+	auto ruleset = compile_ruleset(path, false /* no dump */);
 	if (ops & ParserOps::Persist) {
-		std::ofstream bf{XAC_CONF_PATH};
-		std::ofstream bf_symtab{XAC_SYMTAB_PATH};
+		std::ofstream bf{bin_out};
+		std::ofstream bf_symtab{sym_out};
 		for (uint8_t const b: *std::get<0>(ruleset))
 			bf << b;
 		for (uint8_t const b: *std::get<1>(ruleset))
@@ -1105,7 +1111,23 @@ _ruleset_configure(std::string path, ParserOps ops)
 void
 ruleset_configure(std::string path)
 {
-	_ruleset_configure(path, ParserOps::Persist);
+    char pathbuf[PATH_MAX + 1];
+
+	xac_log(5, "parsing ruleset: ", path);
+
+    strncpy(pathbuf, path.c_str(), path.size() + 1);
+    char *file_name = basename(pathbuf);
+    std::string bin_out =
+        std::string{XAC_BIN_PATH} +
+        "/"s + file_name + ".bin"s;
+	xac_log(5, "ruleset binary: ", bin_out);
+
+    std::string sym_out =
+        std::string{XAC_CONF_PATH} +
+        "/"s + file_name + ".symtab"s;
+	xac_log(5, "ruleset symbol table: ", sym_out);
+
+	_ruleset_configure(path, ParserOps::Persist, bin_out, sym_out);
 }
 
 void
