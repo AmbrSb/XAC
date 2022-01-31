@@ -330,6 +330,8 @@ resolve_subject_label(struct vnode *vp, struct ucred *cred)
 		if (rc)
 			return (NULL);
 		rc = lookup_subject(&sp, &sub);
+		xac_printf(4, "lookup_subject -> subid: %d rc: %d subhash: %u\n",
+				get_subjectid(sub), rc, *(uint32_t*)&sp);
 		if (rc == 0) {
 			sl->l_subject_id = get_subjectid(sub);
 		} else {
