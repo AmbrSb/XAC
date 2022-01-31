@@ -1,0 +1,12 @@
+OBJ /etc/mac_xac/rules.d/
+	/usr/local/sbin/xactl RWX LOG
+	! * RWX
+
+OBJ /etc/mac_xac/rules.d/pin
+	/usr/local/sbin/xactl RW LOG
+	! * RWX
+
+OBJ /usr/local/sbin/xactl
+	/usr/local/sbin/xactl RWX
+	! * RW LOG
+
