@@ -32,6 +32,7 @@
 #include <string>
 #include <map>
 #include <deque>
+#include <cassert>
 
 #include <libgen.h>
 
