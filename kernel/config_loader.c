@@ -42,6 +42,7 @@
 
 #include "xac_common.h"
 #include "config_loader.h"
+#include "file_ops.h"
 
 
 #define RULES_HASHTABLE_SIZE 	(128 * 1024)
@@ -55,15 +56,9 @@
 #define MAX_RULES_CNT 	 (200000 * MAX_RULESETS)
 #define NUM_RULSETS_INVALID (UINT32_MAX)
 
-#define RULESET_PATH "/etc/mac_xac/rules.d/"
-static const char *config_files[] = {
-	"ruleset-sd.bin",
-	"ruleset-usr.bin"
-};
-static object_personality_t *config_files_personalities[sizeof(config_files)];
-
-_Static_assert(sizeof(config_files) / sizeof(config_files[0]) <= MAX_RULESETS,
-				"Too many config files listed.");
+#define RULESET_PATH "/etc/mac_xac/rules.bin/"
+static char *config_files[MAX_RULESETS] = {0};
+static object_personality_t *config_files_personalities[MAX_RULESETS];
 
 /**
  * 'ruleset_gen' is used to verify that MAC_XAC labels
@@ -150,7 +145,7 @@ static uma_zone_t xac_box_ruleset_zone;
  * A global list of all loaded rulesets. Each ruleset is loaded
  * from a separate file named in `config_files` array.
  */
-static SLIST_HEAD(, ruleset) rulesets;
+static STAILQ_HEAD(, ruleset) rulesets;
 /**
  * This is the list type used in rules hash table in each ruleset.
  */
@@ -171,7 +166,7 @@ enum RulesetStatus rulesets_status = NOT_LOADED;
  * loaded by the kernel. It contains a hash table of rules.
  */
 struct ruleset {
-	SLIST_ENTRY(ruleset) next;
+	STAILQ_ENTRY(ruleset) next;
 	struct rules_hashhead *rules_htbl;
 	u_long rules_hmask;
 	/**
@@ -205,16 +200,6 @@ uint32_t subjects_cnt;
 uint32_t objects_cnt;
 uint32_t subjects_cap;
 uint32_t objects_cap;
-
-/**
- * Represents a binary buffer used to hold rulesets binary files
- */
-struct blob
-{
-	uint8_t *b;
-	uint8_t *cur;
-	uint64_t len;
-};
 
 static acid_t add_or_ref_subject(subject_personality_t *sp);
 static acid_t add_or_ref_object(object_personality_t *op);
@@ -611,7 +596,7 @@ lookup_rule(uint32_t sid, uint32_t oid, struct verdict *verdict)
 	 * ruleset requires LOG on the requested operation, the
 	 * corresponding log flag is set in the verdict.
 	 */
-	SLIST_FOREACH(rs, &rulesets, next) {
+	STAILQ_FOREACH(rs, &rulesets, next) {
 		rc = lookup_rule_ruleset(sid, oid, rs, &v);
 		if (rc == 0) {
 			matched = 1;
@@ -892,120 +877,6 @@ destroy_ruleset(struct ruleset *rs)
 	hashdestroy(rs->rules_htbl, M_XAC, rs->rules_hmask);
 	counter_u64_free(rs->stats.match_cnt);
 	free(rs, M_XAC);
-}
-
-static void
-init_blob(struct blob *b)
-{
-	b->b = b->cur = NULL;
-	b->len = 0;
-}
-
-static void
-destroy_blob(struct blob *b)
-{
-	b->len = 0;
-	if (b->b)
-		free(b->b, M_XAC);
-	b->b = NULL;
-}
-
-/**
- * Read the file pointed to by path and load its raw contents
- * into the blob pointed to by rb.
- */
-static int
-load_ruleset_blob(char const *path, struct blob *rb,
-					object_personality_t **rs_personality)
-{
-	struct uio auio;
-	struct iovec aiov;
-	struct nameidata nid;
-	struct vattr va;
-	off_t offset;
-	ssize_t nread;
-	int flags;
-	off_t file_size;
-	off_t rsize;
-	int error;
-	init_blob(rb);
-
-	flags = FREAD;
-	pwd_ensure_dirs();
-	NDINIT(&nid, LOOKUP, 0, UIO_SYSSPACE, path, curthread);
-	error = vn_open(&nid, &flags, 0, NULL);
-	NDFREE(&nid, NDF_ONLY_PNBUF);
-	if (error != 0) {
-		xac_printf(0, "vn_open failed\n");
-		goto failed_noclose;
-	}
-
-	error = VOP_GETATTR(nid.ni_vp, &va, curthread->td_ucred);
-	if (error != 0) {
-		xac_printf(0, "VOP_GETATTR failed\n");
-		goto failed;
-	}
-
-	if (*rs_personality == NULL) {
-		*rs_personality = malloc(sizeof(object_personality_t), M_XAC, M_WAITOK | M_ZERO);
-		(*rs_personality)->i_number = (uint64_t)va.va_fileid;
-		(*rs_personality)->st_dev = va.va_fsid;
-		(*rs_personality)->canary = 0;
-	} else {
-		if ((*rs_personality)->i_number != (uint64_t)va.va_fileid ||
-				(*rs_personality)->st_dev != va.va_fsid) {
-			xac_printf(0, "Ruleset file (%s) personality has changed. "
-						   "Refusing to load ruleset.\n", path);
-			error = (EINVAL);
-			goto failed;
-		}
-	}
-
-	file_size = va.va_size;
-	if (file_size > 1024 * 1024 * 1024) {
-		xac_printf(0, "Config file too large: %lu", file_size);
-		error = (ENOMEM);
-		goto failed;
-	}
-
-	rb->b = rb->cur = malloc(file_size, M_XAC, M_ZERO | M_WAITOK);
-	if (!rb->b) {
-		xac_printf(0, "Allocation of blob failed. file size: %lu", file_size);
-		error = (ENOMEM);
-		goto failed;
-	}
-	bzero(&auio, sizeof(auio));
-	for (offset = 0; offset < file_size; offset += nread) {
-		aiov.iov_base = rb->b + offset;
-		rsize = file_size - offset;
-		aiov.iov_len = rsize;
-		auio.uio_iov = &aiov;
-		auio.uio_iovcnt = 1;
-		auio.uio_offset = offset;
-		auio.uio_rw = UIO_READ;
-		auio.uio_segflg = UIO_SYSSPACE;
-		auio.uio_resid = aiov.iov_len;
-		error = VOP_READ(nid.ni_vp, &auio, 0, curthread->td_ucred);
-		if (error) {
-			xac_printf(0, "VOP_READ failed\n");
-			goto failed;
-		}
-		nread = rsize - auio.uio_resid;
-	}
-	rb->len = file_size;
-
-failed:
-#if __FreeBSD__ < 13
-	VOP_UNLOCK(nid.ni_vp, 0);
-#else
-	VOP_UNLOCK(nid.ni_vp);
-#endif
-	(void)vn_close(nid.ni_vp, FREAD, curthread->td_ucred, curthread);
-
-failed_noclose:
-	if (error && rb->b)
-		destroy_blob(rb);
-	return (error);
 }
 
 static int
@@ -1362,7 +1233,7 @@ out:
 static int
 load_ruleset(struct blob *b, struct ruleset **rsp)
 {
-	struct ruleset *rs, *rsx, *trs;
+	struct ruleset *rs;
 	int rc;
 
 	rc = deserialize_ruleset_blob(b, &rs);
@@ -1370,20 +1241,9 @@ load_ruleset(struct blob *b, struct ruleset **rsp)
 		xac_printf(0, "deserialization of rulset blob failed: %d\n", rc);
 		return (rc);
 	}
-	xac_printf(9, "rulset blob deserialized\n");
+	xac_printf(8, "rulset blob deserialized\n");
 
-	rc = (EINVAL);
-	if (SLIST_FIRST(&rulesets) == NULL) {
-		SLIST_INSERT_HEAD(&rulesets, rs, next);
-		rc = 0;
-	} else {
-		SLIST_FOREACH_SAFE(rsx, &rulesets, next, trs) {
-			if (SLIST_NEXT(rsx, next) == NULL) {
-				SLIST_INSERT_AFTER(rsx, rs, next);
-				rc = 0;
-			}
-		}
-	}
+    STAILQ_INSERT_TAIL(&rulesets, rs, next);
 
 	if (rc == 0 && rsp)
 		*rsp = rs;
@@ -1453,12 +1313,12 @@ destroy_rulesets(int offset)
 	if (offset == 0)
 		rulesets_status = NOT_LOADED;
 
-	SLIST_FOREACH_SAFE(rs, &rulesets, next, trs) {
+	STAILQ_FOREACH_SAFE(rs, &rulesets, next, trs) {
 		if (offset--)
 			continue;
 		purge_rules(rs);
 		destroy_ruleset(rs);
-		SLIST_REMOVE(&rulesets, rs, ruleset, next);
+		STAILQ_REMOVE(&rulesets, rs, ruleset, next);
 	}
 
 	if (offset == 0) {
@@ -1597,33 +1457,42 @@ int
 load_rulesets(void)
 {
 	struct ruleset *rs, *trs;
-	struct blob rsblobs[sizeof(config_files)];
-	int num_rulesets_to_load;
-	int i, j;
-	int rc;
+	struct blob *rsblobs = NULL;
+    int rulesets_cnt = 0;
+	int i, j, rc;
 	uint32_t num_rulesets_loaded = NUM_RULSETS_INVALID;
 
+    dir_files(RULESET_PATH, config_files, &rulesets_cnt, MAX_RULESETS);
+	rsblobs = malloc(rulesets_cnt * sizeof(struct blob), M_TEMP, M_WAITOK | M_ZERO);
+    if (rsblobs == NULL) {
+        rc = ENOMEM;
+        goto fail;
+    }
 
-	num_rulesets_to_load = sizeof(config_files) / sizeof(config_files[0]);
+    /**
+     * Fill in config_files list from contents of the RULESET_PATH directory
+     */
 
-	WLOCK_RULESETS;
 	/**
 	 * Read ruleset binaries.
 	 */
-	for (i = 0; i < num_rulesets_to_load; i++) {
-		xac_printf(9, "going to load rulset blob (%s)\n", config_files[i]);
-		rc = load_ruleset_blob(get_config_file_path(i), &rsblobs[i],
+	for (i = 0; i < rulesets_cnt; i++) {
+		xac_printf(7, "going to load rulset blob (%s)\n", config_files[i]);
+		rc = load_file(get_config_file_path(i), &rsblobs[i],
 								&config_files_personalities[i]);
 		if (rc) {
 			xac_printf(0, "loading rulset blob failed error: %d (%s)\n",
 						rc, config_files[i]);
 			/** destroy previously loaded blobs if any */
-			for (j = i - 1; j > -1; j--)
+			for (j = i - 1; j > -1; j--) {
 				destroy_blob(&rsblobs[j]);
+            }
 			goto fail;
 		}
 		xac_printf(9, "rulset blob loaded\n");
 	}
+
+	WLOCK_RULESETS;
 
 	if (rulesets_status == READY)
 		xac_printf(1, "Reloading rulesets.\n");
@@ -1643,10 +1512,10 @@ load_rulesets(void)
 	 * `num_rulests_loaded` till end of the list.
 	 */
 	num_rulesets_loaded = 0;
-	SLIST_FOREACH_SAFE(rs, &rulesets, next, trs) {
+	STAILQ_FOREACH_SAFE(rs, &rulesets, next, trs) {
 		num_rulesets_loaded++;
 	}
-	for (i = 0; i < num_rulesets_to_load; i++) {
+	for (i = 0; i < rulesets_cnt; i++) {
 		rc = load_ruleset(&rsblobs[i], NULL);
 		destroy_blob(&rsblobs[i]);
 		if (rc)
@@ -1659,15 +1528,18 @@ load_rulesets(void)
 	 * we can confidently destroy the first `num_rulesets_loaded` 
 	 * rulesets
 	 */
-	SLIST_FOREACH_SAFE(rs, &rulesets, next, trs) {
-		if (num_rulesets_loaded-- == 0)
-			break;
+    for (i = 0; i < num_rulesets_loaded; ++i) {
+        rs = STAILQ_FIRST(&rulesets);
+
+		xac_printf(4, "Removing old ruleset removed from rulesets list\n");
+		STAILQ_REMOVE_HEAD(&rulesets, next);
+
 		xac_printf(3, "Unloading old ruleset.\n");
 		purge_rules(rs);
-		xac_printf(9, "purged all rules in old ruleset\n");
+
+		xac_printf(4, "purged all rules in old ruleset\n");
 		destroy_ruleset(rs);
-		xac_printf(9, "destroyed old ruleset\n");
-		SLIST_REMOVE(&rulesets, rs, ruleset, next);
+		xac_printf(4, "destroyed old ruleset\n");
 	}
 	/**
 	 * By increasing the generation number, we invalidate all previously
@@ -1675,7 +1547,13 @@ load_rulesets(void)
 	 */
 	ruleset_gen++;
 	rulesets_status = READY;
+	num_rulesets_loaded = 0;
+	STAILQ_FOREACH_SAFE(rs, &rulesets, next, trs) {
+		num_rulesets_loaded++;
+	}
+    xac_printf(0, "Now there are %d rulesets\n", num_rulesets_loaded);
 	WUNLOCK_RULESETS ;
+    free(rsblobs, M_TEMP);
 	return (0);
 
 fail:
@@ -1684,20 +1562,21 @@ fail:
 	if (num_rulesets_loaded != NUM_RULSETS_INVALID)
 		destroy_rulesets(num_rulesets_loaded);
 	WUNLOCK_RULESETS ;
+    free(rsblobs, M_TEMP);
 	return (rc);
 }
 
 static void
 init_config_files_personalities(void)
 {
-	for (int i = 0; i < sizeof(config_files) / sizeof(config_files[0]); i++)
+	for (int i = 0; i < MAX_RULESETS; i++)
 		config_files_personalities[i] = NULL;
 }
 
 static void
 deinit_config_files_personalities(void)
 {
-	for (int i = 0; i < sizeof(config_files) / sizeof(config_files[0]); i++)
+	for (int i = 0; i < MAX_RULESETS; i++)
 		if (config_files_personalities[i] != NULL)
 			free(config_files_personalities[i], M_XAC);
 }
@@ -1709,7 +1588,7 @@ init_config(void)
 	init_memory_management();
 	sx_init_flags(&rulesets_lock, "xac general rulesets lock",
 					SX_RECURSE);
-	SLIST_INIT(&rulesets);
+	STAILQ_INIT(&rulesets);
 	init_config_files_personalities();
 	subjects_cnt = 0;
 	objects_cnt = 0;
@@ -1741,6 +1620,7 @@ xac_cl_loader(struct module *m, int what, void *arg)
 	{
 	case MOD_LOAD:
 		init_config();
+
 		if (root_mounted()) {
 			load_rulesets();
 		}

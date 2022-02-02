@@ -33,7 +33,9 @@ SRCS=	vnode_if.h \
 		config_loader.c \
 		config_loader.h \
 		xac_common.c \
-		xac_common.h
+		xac_common.h \
+		file_ops.c \
+		file_ops.h
 
 .ifdef XAC_DEBUG
 CFLAGS+= -DDEBUG
